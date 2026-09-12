@@ -2,6 +2,7 @@ import type { PaseoApi, PaseoAgent } from '@getpaseo/client';
 import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type CompleteReviewInput, type CreateInput, type MoveInput, type PatchInput } from './contracts.shared';
 import { buildCards, defaultModeId, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment } from './model.shared';
 import { Store } from './store.server';
+import { applyProjectAction, type ProjectAction } from './projects.shared';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
@@ -35,6 +36,14 @@ export function summarizeAgent(agent: PaseoAgent): Agent {
 
 export class BoardService {
   constructor(readonly store: Store) {}
+  async organizeProjects(action: ProjectAction, paseo: PaseoApi) {
+    return this.store.update(async data => {
+      const workspaces = action.type === 'moveProject' ? await collectPages(cursor => paseo.workspaces.list({ page: { limit: 100, cursor } })) : [];
+      const projects = [...new Map(workspaces.map(workspace => [workspace.projectId, { id: workspace.projectId, name: workspace.projectDisplayName }])).values()];
+      applyProjectAction(data.projectLayout, action, projects);
+      return { ok: true };
+    });
+  }
   private attachmentKey(taskId: string) {
     const uuid = /^task:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(taskId)?.[1];
     return uuid ?? createHash('sha256').update(taskId).digest('hex');

@@ -1,6 +1,9 @@
 import { defineRpc } from '@getpaseo/plugin/server';
 import { z } from 'zod';
 import { snapshotSchema, stages, taskSchema } from './model.shared';
+import { projectActionSchema } from './projects.shared';
+
+export const organizeProjects = defineRpc({ name: 'board.organize-projects', input: projectActionSchema, output: z.object({ ok: z.boolean() }) });
 
 export const readBoard = defineRpc({ name: 'board.read', input: z.object({}), output: snapshotSchema });
 export const patchInput = z.object({ id: z.string().min(1), patch: z.object({

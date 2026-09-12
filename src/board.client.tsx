@@ -6,8 +6,12 @@ import { Icon } from '@getpaseo/plugin/react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { completeReviewCards, createTask, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type MoveInput, type PatchInput } from './contracts.shared';
 import { buildCards, defaultModeId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type Snapshot, type Stage, type Task } from './model.shared';
+import { organizeProjects } from './contracts.shared';
+import type { ProjectAction } from './projects.shared';
+import { ProjectSidebar } from './project-sidebar.client';
 
 export interface BoardApi {
+  organize(action: ProjectAction): Promise<unknown>;
   read(): Promise<Snapshot>;
   patch(input: PatchInput): Promise<unknown>;
   move(input: MoveInput): Promise<unknown>;
@@ -24,12 +28,16 @@ export function KanbanWorkspace(props: PluginWorkspacePanelProps) {
   return <ConnectedBoard key={`${props.host.id}:${props.workspaceId}`} {...props} workspaceId={props.workspaceId} />;
 }
 function ConnectedBoard(props: PluginSurfaceProps & { workspaceId?: string }) {
+  const organize = useRpc(organizeProjects);
   const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), create = useRpc(createTask), launch = useRpc(launchTask), remove = useRpc(deleteTask);
-  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, create, launch, remove }), [read, patch, move, completeReview, create, launch, remove]);
+  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, create, launch, remove, organize }), [read, patch, move, completeReview, create, launch, remove, organize]);
   return <BoardView {...props} api={api} />;
 }
 
 type Colors = PluginTheme['colors'];
+const SIDEBAR_MIN_WIDTH = 176;
+const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_DEFAULT_WIDTH = 210;
 const row = { flexDirection: 'row', alignItems: 'center' } as const;
 const wrap = { ...row, flexWrap: 'wrap', gap: 8 } as const;
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -68,6 +76,8 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const [hidden, setHidden] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const [defaultModel, setDefaultModel] = useState('');
   const [dragging, setDragging] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const search = useRef<TextInput>(null);
@@ -94,6 +104,28 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [layout.platform]);
+  useEffect(() => {
+    if (layout.platform !== 'web' || typeof window === 'undefined') return;
+    const savedWidth = Number(window.localStorage.getItem(`paseo-kanban:sidebar-width:${host.id}`));
+    if (Number.isFinite(savedWidth) && savedWidth >= SIDEBAR_MIN_WIDTH && savedWidth <= SIDEBAR_MAX_WIDTH) setSidebarWidth(savedWidth);
+    setDefaultModel(window.localStorage.getItem(`paseo-kanban:default-model:${host.id}`) ?? '');
+  }, [host.id, layout.platform]);
+  const saveDefaultModel = (model: string) => {
+    setDefaultModel(model);
+    if (layout.platform === 'web' && typeof window !== 'undefined') window.localStorage.setItem(`paseo-kanban:default-model:${host.id}`, model);
+  };
+  const resizeSidebar = (event: React.PointerEvent) => {
+    if (layout.platform !== 'web' || typeof window === 'undefined') return;
+    event.preventDefault();
+    const startX = event.clientX, startWidth = sidebarWidth;
+    const move = (next: PointerEvent) => setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth + next.clientX - startX)));
+    const up = (next: PointerEvent) => {
+      const width = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth + next.clientX - startX));
+      setSidebarWidth(width); window.localStorage.setItem(`paseo-kanban:sidebar-width:${host.id}`, String(width));
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
   const all = useMemo(() => board.data ? buildCards(board.data) : [], [board.data]);
   const scope = all.filter(card => !workspaceId || card.workspaceId === workspaceId);
   const visible = filterCards(all, { query, projectId: project, workspaceId, provider, pinned, attention, hidden });
@@ -120,16 +152,15 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   return <View style={{ flex: 1, backgroundColor: c.surface0, minHeight: 0 }}>
     {preview && <View style={{ ...row, backgroundColor: c.surface2, justifyContent: 'center', padding: 8, gap: 8 }}><Icon name="FlaskConical" size={13} color={c.statusWarning} /><Text style={{ color: c.foregroundMuted, fontSize: 11 }}>交互预览 · 使用示例数据，不会操作真实 Paseo 会话</Text></View>}
     <View style={{ flex: 1, flexDirection: 'row', minHeight: 0 }}>
-      {!layout.compact && !workspaceId && <View style={{ width: 210, borderRightWidth: 1, borderRightColor: c.border, padding: 16, paddingTop: 24 }}>
+      {!layout.compact && !workspaceId && <View testID="board-sidebar" style={{ width: sidebarWidth, position: 'relative', borderRightWidth: 1, borderRightColor: c.border, padding: 16, paddingTop: 24 }}>
         <View style={{ ...row, gap: 10, paddingHorizontal: 8, marginBottom: 30 }}><Icon name="PanelsTopLeft" size={23} color={c.accent} /><Text style={{ color: c.foreground, fontSize: 18, fontWeight: '700', letterSpacing: -0.6 }}>paseo<Text style={{ color: c.foregroundMuted, fontWeight: '400' }}> / board</Text></Text></View>
         <Label c={c}>工作台</Label>
         {sidebarItem('全部任务', 'LayoutGrid', !project && !pinned && !attention && !hidden, reset, count())}
         {sidebarItem('需要我处理', 'Inbox', attention, () => { reset(); setAttention(true); }, scope.filter(x => !x.hidden && ['blocked', 'review'].includes(x.stage)).length)}
         {sidebarItem('已置顶', 'Pin', pinned, () => { reset(); setPinned(true); }, scope.filter(x => !x.hidden && x.pinned).length)}
-        <View style={{ height: 28 }} /><Label c={c}>项目</Label>
+        <View style={{ height: 28 }} />
         <ScrollView style={{ flex: 1 }}>
-          {projects.map(p => sidebarItem(p.name, 'FolderGit2', project === p.id, () => { reset(); setProject(p.id); }, count(p.id)))}
-          {projects.length === 0 && <Text style={{ color: c.foregroundMuted, fontSize: 12, padding: 12 }}>尚无项目</Text>}
+          {board.data && <ProjectSidebar c={c} projects={projects} layout={board.data.store.projectLayout} selected={project} busy={busy} web={layout.platform === 'web'} select={id => { reset(); setProject(id); }} count={id => count(id)} organize={action => run(() => api.organize(action))} />}
         </ScrollView>
         {sidebarItem('已收起', 'Archive', hidden, () => { reset(); setHidden(true); }, scope.filter(x => x.hidden).length)}
         <View style={{ marginTop: 18, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 18, ...row, gap: 8 }}>
@@ -137,6 +168,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
           <Text numberOfLines={1} style={{ flex: 1, color: c.foregroundMuted, fontSize: 11 }}>{host.label}</Text>
           <Text style={{ color: c.foregroundMuted, fontSize: 10 }}>本机存储</Text>
         </View>
+        {layout.platform === 'web' && createElement('div', { 'data-testid': 'sidebar-resizer', role: 'separator', 'aria-label': '调整左侧栏宽度', 'aria-orientation': 'vertical', onPointerDown: resizeSidebar, style: { position: 'absolute', top: 0, right: -4, bottom: 0, width: 8, cursor: 'col-resize', touchAction: 'none', zIndex: 2 } })}
       </View>}
       <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
         <View style={{ paddingHorizontal: layout.compact ? 16 : 28, paddingTop: 25, paddingBottom: 19, borderBottomWidth: 1, borderBottomColor: c.border, gap: 18 }}>
@@ -204,7 +236,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     <Modal visible={creating} transparent animationType="fade" onRequestClose={() => { if (!mutation.isPending) setCreating(false); }}>
       <View style={{ flex: 1, backgroundColor: c.surface0, alignItems: 'center', justifyContent: 'center', padding: layout.compact ? 12 : 28 }}>
         <View style={{ width: '100%', maxWidth: 560, maxHeight: '95%', backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 14, overflow: 'hidden' }}>
-          {creating && <CreateForm c={c} snapshot={board.data} workspaceId={workspaceId} projectId={project} web={layout.platform === 'web'} busy={busy} close={() => setCreating(false)} create={async input => { let task: Task | undefined; const ok = await run(async () => { task = await api.create(input); }); if (ok && task) { reset(); setSelected(task.id); setCreating(false); } return ok; }} />}
+          {creating && <CreateForm c={c} snapshot={board.data} workspaceId={workspaceId} projectId={project} web={layout.platform === 'web'} busy={busy} defaultModel={defaultModel} setDefaultModel={saveDefaultModel} close={() => setCreating(false)} create={async input => { let task: Task | undefined; const ok = await run(async () => { task = await api.create(input); }); if (ok && task) { reset(); setSelected(task.id); setCreating(false); } return ok; }} />}
         </View>
       </View>
     </Modal>
@@ -267,6 +299,16 @@ function AttachmentPicker({ c, attachments, disabled, onChange, onError, onReadi
     catch (error) { onError(errorText(error)); }
     finally { setReading(false); onReadingChange(false); }
   };
+  useEffect(() => {
+    const paste = (event: ClipboardEvent) => {
+      const files = Array.from(event.clipboardData?.files ?? []);
+      if (!files.length) return;
+      event.preventDefault();
+      void addFiles(files);
+    };
+    window.addEventListener('paste', paste);
+    return () => window.removeEventListener('paste', paste);
+  });
   return createElement('div', {
     'data-testid': 'attachment-dropzone',
     style: { border: `1px dashed ${dragging ? c.accent : c.border}`, borderRadius: 8, background: dragging ? c.surface2 : c.surface0, padding: 14, marginBottom: 18 },
@@ -276,7 +318,7 @@ function AttachmentPicker({ c, attachments, disabled, onChange, onError, onReadi
     onDrop: (event: React.DragEvent) => { if (!disabled && event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); setDragging(false); void addFiles(Array.from(event.dataTransfer.files)); } },
   },
   createElement('input', { ref: input, type: 'file', multiple: true, disabled: disabled || reading, style: { display: 'none' }, onChange: (event: React.ChangeEvent<HTMLInputElement>) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addFiles(files); } }),
-  <View style={{ ...row, gap: 10 }}><Icon name="Paperclip" size={17} color={dragging ? c.accent : c.foregroundMuted} /><View style={{ flex: 1 }}><Text style={{ color: c.foreground, fontSize: 12, fontWeight: '600' }}>{reading ? '正在读取附件…' : dragging ? '松开即可添加' : '拖拽图片或文件到这里'}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>最多 10 个，单个 20 MB，总计 50 MB</Text></View><Button c={c} small disabled={disabled || reading} onPress={() => input.current?.click()}>选择文件</Button></View>,
+  <View style={{ ...row, gap: 10 }}><Icon name="Paperclip" size={17} color={dragging ? c.accent : c.foregroundMuted} /><View style={{ flex: 1 }}><Text style={{ color: c.foreground, fontSize: 12, fontWeight: '600' }}>{reading ? '正在读取附件…' : dragging ? '松开即可添加' : '拖拽或粘贴图片、文件到这里'}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>支持 Ctrl/⌘ + V · 最多 10 个，单个 20 MB，总计 50 MB</Text></View><Button c={c} small disabled={disabled || reading} onPress={() => input.current?.click()}>选择文件</Button></View>,
   attachments.length > 0 && <View style={{ gap: 7, marginTop: 12 }}>{attachments.map(attachment => <View key={attachment.id} style={{ ...row, gap: 8, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8 }}><Icon name="File" size={14} color={c.foregroundMuted} /><Text numberOfLines={1} style={{ flex: 1, color: c.foreground, fontSize: 11 }}>{attachment.fileName}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10 }}>{formatBytes(attachment.size)}</Text><Button c={c} small icon="X" label={`移除附件 ${attachment.fileName}`} disabled={disabled || reading} onPress={() => onChange(attachments.filter(item => item.id !== attachment.id))} /></View>)}</View>);
 }
 
@@ -315,12 +357,17 @@ function Detail({ card, snapshot, c, busy, navigation, close, move, save, launch
   </>;
 }
 
-function CreateForm({ c, snapshot, workspaceId, projectId, web, busy, close, create }: { c: Colors; snapshot?: Snapshot; workspaceId?: string; projectId: string; web: boolean; busy: boolean; close(): void; create(input: CreateInput): Promise<boolean> }) {
+function CreateForm({ c, snapshot, workspaceId, projectId, web, busy, defaultModel, setDefaultModel, close, create }: { c: Colors; snapshot?: Snapshot; workspaceId?: string; projectId: string; web: boolean; busy: boolean; defaultModel: string; setDefaultModel(model: string): void; close(): void; create(input: CreateInput): Promise<boolean> }) {
   const [clientRequestId] = useState(clientUuid);
   const [title, setTitle] = useState(''), [description, setDescription] = useState(''), [tags, setTags] = useState('');
   const [attachments, setAttachments] = useState<CreateAttachmentInput[]>([]);
   const [workspace, setWorkspace] = useState(workspaceId ?? snapshot?.workspaces.find(w => !projectId || w.projectId === projectId)?.id ?? '');
-  const [provider, setProvider] = useState(snapshot?.models[0]?.id ?? '');
+  const [workspaceQuery, setWorkspaceQuery] = useState('');
+  const availableModels = snapshot?.models ?? [];
+  const [provider, setProvider] = useState(availableModels.some(model => model.id === defaultModel) ? defaultModel : availableModels[0]?.id ?? '');
+  const workspaceWords = workspaceQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const selectableWorkspaces = (snapshot?.workspaces ?? []).filter(w => !workspaceId || w.id === workspaceId);
+  const filteredWorkspaces = selectableWorkspaces.filter(w => workspaceWords.every(word => [w.id, w.project, w.name, w.directory].join(' ').toLocaleLowerCase().includes(word)));
   const [modeSelection, setModeSelection] = useState<{ provider: string; id: string } | null>(null);
   const modeProvider = provider.split('/')[0];
   const modes = (snapshot?.modes ?? []).filter(mode => mode.provider === modeProvider);
@@ -336,9 +383,12 @@ function CreateForm({ c, snapshot, workspaceId, projectId, web, busy, close, cre
       <Input c={c} label="任务说明" value={description} onChangeText={setDescription} multiline placeholder="目标、涉及的文件，以及怎样才算完成…" />
       <Label c={c}>图片与文件</Label>
       {web ? <AttachmentPicker c={c} attachments={attachments} disabled={busy || submitting} onChange={setAttachments} onError={setError} onReadingChange={setReadingAttachments} /> : <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: 18 }}>请在桌面端拖拽或选择附件。</Text>}
-      <Label c={c}>工作区</Label><View style={{ ...wrap, marginBottom: 20 }}>{(snapshot?.workspaces ?? []).filter(w => !workspaceId || w.id === workspaceId).map(w => <Button key={w.id} c={c} small active={workspace === w.id} onPress={() => setWorkspace(w.id)}>{w.project} / {w.name}</Button>)}</View>
+      <Label c={c}>工作区</Label>
+      {!workspaceId && selectableWorkspaces.length > 1 && <View style={{ ...row, gap: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface0, borderRadius: 7, paddingHorizontal: 10, marginBottom: 10 }}><Icon name="Search" size={14} color={c.foregroundMuted} /><TextInput accessibilityLabel="搜索工作区" value={workspaceQuery} onChangeText={setWorkspaceQuery} placeholder="按项目、工作区或路径搜索…" placeholderTextColor={c.foregroundMuted} style={{ flex: 1, color: c.foreground, fontSize: 12, height: 38 }} />{workspaceQuery ? <Pressable accessibilityRole="button" accessibilityLabel="清除工作区搜索" onPress={() => setWorkspaceQuery('')}><Icon name="X" size={14} color={c.foregroundMuted} /></Pressable> : null}</View>}
+      <View style={{ ...wrap, marginBottom: 20 }}>{filteredWorkspaces.map(w => <Button key={w.id} c={c} small active={workspace === w.id} onPress={() => setWorkspace(w.id)}>{w.project} / {w.name}</Button>)}{selectableWorkspaces.length > 0 && filteredWorkspaces.length === 0 && <Text style={{ color: c.foregroundMuted, fontSize: 11 }}>没有匹配的工作区</Text>}</View>
       {!snapshot?.workspaces.length && <Text style={{ color: c.statusWarning, fontSize: 12, marginBottom: 15 }}>请先在 Paseo 中创建一个工作区。</Text>}
-      <Label c={c}>Agent / 模型</Label><View style={{ ...wrap, marginBottom: 20 }}>{snapshot?.models.map(m => <Button key={m.id} c={c} small icon="Bot" active={provider === m.id} onPress={() => setProvider(m.id)}>{m.provider} / {m.label}</Button>)}</View>
+      <Label c={c}>Agent / 模型</Label><View style={{ ...wrap, marginBottom: 10 }}>{snapshot?.models.map(m => <Button key={m.id} c={c} small icon="Bot" active={provider === m.id} onPress={() => setProvider(m.id)}>{m.provider} / {m.label}</Button>)}</View>
+      {provider && <View style={{ ...row, marginBottom: 20 }}><Button c={c} small icon={defaultModel === provider ? 'Star' : 'StarOff'} active={defaultModel === provider} onPress={() => setDefaultModel(provider)}>{defaultModel === provider ? '当前默认模型' : '设为默认模型'}</Button></View>}
       {!snapshot?.models.length && <Text style={{ color: c.statusWarning, fontSize: 12, marginBottom: 15 }}>{snapshot?.providerError || '未发现可用模型，请先在 Paseo 配置提供商。'}</Text>}
       <Label c={c}>运行模式</Label>
       <View accessibilityRole="radiogroup" accessibilityLabel="运行模式" style={{ ...wrap, marginBottom: 20 }}>

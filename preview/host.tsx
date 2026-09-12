@@ -2,6 +2,8 @@ import { createElement } from 'react';
 import type { PluginIconProps } from '@getpaseo/plugin';
 
 const paths: Record<string, string[]> = {
+  ArrowUp: ['M12 19V5', 'm5 12 7-7 7 7'], ArrowDown: ['M12 5v14', 'm5 12 7 7 7-7'],
+  ChevronDown: ['m6 9 6 6 6-6'], ChevronRight: ['m9 6 6 6-6 6'], Pencil: ['m16 3 5 5-12 12-6 1 1-6Z', 'm14 5 5 5'],
   Plus: ['M12 5v14', 'M5 12h14'], X: ['m6 6 12 12', 'M6 18 18 6'], Search: ['M21 21l-4.5-4.5', 'M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0'],
   Check: ['m5 12 4 4L19 6'], RefreshCw: ['M20 7v5h-5', 'M4 17v-5h5', 'M5.1 8A7 7 0 0 1 17 5l3 7', 'M4 12l3 7a7 7 0 0 0 11.9-3'],
   Pin: ['m16 3 5 5-4 1-3 5 1 3-8-8 3 1 5-3Z', 'm2 22 7-7'], ArrowUpRight: ['M7 17 17 7', 'M7 7h10v10'],

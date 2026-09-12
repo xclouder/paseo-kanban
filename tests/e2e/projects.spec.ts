@@ -1,0 +1,53 @@
+import { expect, test } from '@playwright/test';
+
+test('sidebar project drag sorting persists and selection still filters the board', async ({ page }) => {
+  await page.goto('/');
+  const sidebar = page.getByTestId('project-sidebar');
+  await sidebar.getByRole('button', { name: '整理项目', exact: true }).click();
+  await sidebar.getByTestId('sidebar-project-project-api').locator('..').dragTo(sidebar.getByTestId('sidebar-project-project-kanban'));
+  await expect(sidebar.getByRole('button', { name: /^筛选项目 / }).first()).toHaveAccessibleName('筛选项目 agent-service');
+  await page.reload();
+  await expect(sidebar.getByRole('button', { name: /^筛选项目 / }).first()).toHaveAccessibleName('筛选项目 agent-service');
+  await sidebar.getByRole('button', { name: '筛选项目 agent-service', exact: true }).click();
+  await expect(page.getByRole('button', { name: /^查看任务 / })).toHaveCount(3);
+});
+
+test('create, assign, rename, collapse and delete project groups without losing projects', async ({ page }) => {
+  await page.goto('/');
+  const sidebar = page.getByTestId('project-sidebar');
+  await sidebar.getByRole('button', { name: '整理项目', exact: true }).click();
+  await sidebar.getByLabel('新分组名称', { exact: true }).fill('工作');
+  await sidebar.getByRole('button', { name: '新建项目分组', exact: true }).click();
+  await expect(sidebar.getByRole('button', { name: '折叠分组 工作', exact: true })).toBeVisible();
+  await sidebar.getByTestId('sidebar-project-project-kanban').locator('..').dragTo(sidebar.getByRole('button', { name: '折叠分组 工作', exact: true }));
+  await expect(sidebar.getByTestId('project-section-ungrouped').getByTestId('sidebar-project-project-kanban')).toHaveCount(0);
+  await sidebar.getByRole('button', { name: '重命名分组 工作', exact: true }).click();
+  await sidebar.getByLabel('修改分组名称', { exact: true }).fill('常用项目');
+  await sidebar.getByRole('button', { name: '保存分组名称', exact: true }).click();
+  await sidebar.getByRole('button', { name: '折叠分组 常用项目', exact: true }).click();
+  await expect(sidebar.getByTestId('sidebar-project-project-kanban')).toHaveCount(0);
+  await page.reload();
+  await sidebar.getByRole('button', { name: '展开分组 常用项目', exact: true }).click();
+  await expect(sidebar.getByTestId('sidebar-project-project-kanban')).toBeVisible();
+  await sidebar.getByRole('button', { name: '整理项目', exact: true }).click();
+  await sidebar.getByLabel('新分组名称', { exact: true }).fill('其他');
+  await sidebar.getByRole('button', { name: '新建项目分组', exact: true }).click();
+  await sidebar.getByRole('button', { name: '上移分组 其他', exact: true }).click();
+  await expect(sidebar.getByRole('button', { name: /^折叠分组 / }).first()).toHaveAccessibleName('折叠分组 其他');
+  await sidebar.getByRole('button', { name: '折叠分组 常用项目', exact: true }).locator('xpath=ancestor::div[@draggable="true"][1]').dragTo(sidebar.getByRole('button', { name: '折叠分组 其他', exact: true }));
+  await expect(sidebar.getByRole('button', { name: /^折叠分组 / }).first()).toHaveAccessibleName('折叠分组 常用项目');
+  const otherSection = sidebar.locator('[data-testid^="project-section-"]').filter({ has: page.getByRole('button', { name: '折叠分组 其他', exact: true }) });
+  await sidebar.getByTestId('sidebar-project-project-kanban').locator('..').dragTo(sidebar.getByRole('button', { name: '折叠分组 其他', exact: true }));
+  await expect(otherSection.getByTestId('sidebar-project-project-kanban')).toBeVisible();
+  await sidebar.getByTestId('sidebar-project-project-kanban').locator('..').dragTo(sidebar.getByRole('button', { name: '折叠分组 常用项目', exact: true }));
+  await expect(otherSection.getByTestId('sidebar-project-project-kanban')).toHaveCount(0);
+  await sidebar.getByRole('button', { name: '设置项目分组 agent-service', exact: true }).click();
+  await sidebar.getByRole('button', { name: '将 agent-service 移至 常用项目', exact: true }).click();
+  await sidebar.getByRole('button', { name: '上移项目 agent-service', exact: true }).click();
+  await expect(sidebar.getByRole('button', { name: /^筛选项目 / }).first()).toHaveAccessibleName('筛选项目 agent-service');
+  await sidebar.getByRole('button', { name: '删除分组 常用项目，项目移回未分组', exact: true }).click();
+  await expect(sidebar.getByTestId('project-section-ungrouped').getByRole('button', { name: /^筛选项目 / })).toHaveCount(2);
+  await page.reload();
+  await expect(sidebar.getByRole('button', { name: /^筛选项目 / })).toHaveCount(2);
+  await expect(sidebar.getByRole('button', { name: '折叠分组 常用项目', exact: true })).toHaveCount(0);
+});

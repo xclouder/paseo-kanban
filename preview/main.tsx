@@ -5,6 +5,7 @@ import type { PluginTheme } from '@getpaseo/plugin';
 import { BoardView, type BoardApi } from '../src/board.client';
 import { buildCards, defaultModeId, metadataSchema, snapshotSchema, taskSchema } from '../src/model.shared';
 import { fixture } from './fixture';
+import { applyProjectAction } from '../src/projects.shared';
 import './style.css';
 
 const key = 'paseo-kanban-preview-v1';
@@ -17,6 +18,12 @@ function metadata(id: string) {
   return data.store.tasks[id];
 }
 const api: BoardApi = {
+  organize: async action => {
+    const next = structuredClone(data);
+    applyProjectAction(next.store.projectLayout, action, [...new Map(next.workspaces.map(workspace => [workspace.projectId, { id: workspace.projectId, name: workspace.project }])).values()]);
+    localStorage.setItem(key, JSON.stringify(next));
+    data = next;
+  },
   read: async () => structuredClone({ ...data, modes: fixture().modes, fetchedAt: new Date().toISOString() }),
   patch: async ({ id, patch }) => { Object.assign(metadata(id), patch); persist(); },
   move: async ({ id, stage, beforeId }) => {

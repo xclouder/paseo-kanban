@@ -13,6 +13,44 @@ test('search across projects and clear to restore all sessions', async ({ page }
   expect(errors).toEqual([]);
 });
 
+test('resize the project sidebar and restore its width', async ({ page }) => {
+  await page.goto('/');
+  const sidebar = page.getByTestId('board-sidebar');
+  const resizer = page.getByTestId('sidebar-resizer');
+  const before = await sidebar.boundingBox();
+  const handle = await resizer.boundingBox();
+  expect(before).not.toBeNull(); expect(handle).not.toBeNull();
+  await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(handle!.x + handle!.width / 2 + 72, handle!.y + 40);
+  await page.mouse.up();
+  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeGreaterThan(before!.width + 60);
+  const resized = (await sidebar.boundingBox())!.width;
+  await page.reload();
+  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeCloseTo(resized, 0);
+});
+
+test('filter workspaces, paste an attachment, and remember the default model', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.getByLabel('搜索工作区', { exact: true }).fill('agent-service api');
+  await expect(page.getByRole('button', { name: 'agent-service / feature/events', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'paseo-kanban / main', exact: true })).toHaveCount(0);
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['clipboard image'], 'clipboard.png', { type: 'image/png' }));
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByText('clipboard.png', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'codex / 示例模型', exact: true }).click();
+  await page.getByRole('button', { name: '设为默认模型', exact: true }).click();
+  await expect(page.getByRole('button', { name: '当前默认模型', exact: true })).toBeVisible();
+  await page.getByLabel('关闭新建任务', { exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await expect(page.getByRole('button', { name: '当前默认模型', exact: true })).toBeVisible();
+});
+
 test('create, save, launch and navigate with persisted task metadata', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '新建任务', exact: true }).click();

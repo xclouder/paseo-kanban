@@ -43,6 +43,26 @@ function mockApi() {
 }
 const input = { clientRequestId: '66666666-6666-4666-8666-666666666666', title: 'Ship feature', description: 'Acceptance criteria', workspaceId: 'workspace-web', provider: 'codex/model', priority: 'high' as const, tags: ['test'] };
 
+test('project organization merges concurrent edits and survives store reload without changing tasks', async t => {
+  const { service, store } = await setup(t); const { api } = mockApi();
+  const task = await service.create(input, api);
+  await Promise.all([
+    service.organizeProjects({ type: 'createGroup', id: 'work', name: '工作' }, api),
+    service.organizeProjects({ type: 'createGroup', id: 'personal', name: '个人' }, api),
+  ]);
+  await service.organizeProjects({ type: 'moveProject', id: 'project-kanban', groupId: 'work' }, api);
+  await service.organizeProjects({ type: 'collapseGroup', id: 'work', collapsed: true }, api);
+  const stored = await new Store(store.file).read();
+  assert.equal(stored.projectLayout.groups.length, 2);
+  assert.equal(stored.projectLayout.groups[0].collapsed, true);
+  assert.equal(stored.projectLayout.membership['project-kanban'], 'work');
+  await service.organizeProjects({ type: 'deleteGroup', id: 'work' }, api);
+  const after = await store.read();
+  assert.equal(after.projectLayout.membership['project-kanban'], undefined);
+  assert.deepEqual(after.tasks[task.id], task);
+  await assert.rejects(() => service.organizeProjects({ type: 'moveProject', id: 'missing', groupId: null }, api), /项目已不可用/);
+});
+
 test('pagination loads beyond first hundred and rejects cursor loops', async () => {
   const entries = await collectPages(async cursor => ({ entries: cursor ? Array.from({ length: 80 }, (_,i) => i + 100) : Array.from({ length: 100 }, (_,i) => i), pageInfo: { hasMore: !cursor, nextCursor: cursor ? null : 'second' } }));
   assert.equal(entries.length, 180); assert.equal(entries[179], 179);
