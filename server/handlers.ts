@@ -1,10 +1,10 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { PluginHandlerContext } from '@getpaseo/plugin';
-import { BoardService } from './service.server';
-import { Store } from './store.server';
-import type { ProjectAction } from './projects.shared';
-import type { CompleteReviewInput, CreateInput, MoveInput, PatchInput } from './contracts.shared';
+import type { PluginHandlerContext } from '@getpaseo/plugin/server';
+import { BoardService } from './service';
+import { Store } from './store';
+import type { ProjectAction } from '../shared/projects';
+import type { CompleteReviewInput, CreateInput, MoveInput, PatchInput } from '../shared/contracts';
 
 const service = new BoardService(new Store(join(process.env.PASEO_HOME || join(homedir(), '.paseo'), 'paseo-kanban', 'board.json')));
 export const read = (_: object, { paseo }: PluginHandlerContext) => service.read(paseo);

@@ -2,9 +2,9 @@ import { createPaseoClient } from '@getpaseo/client';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { BoardService } from '../src/service.server';
-import { Store } from '../src/store.server';
-import { buildCards, snapshotSchema } from '../src/model.shared';
+import { BoardService } from '../server/service';
+import { Store } from '../server/store';
+import { buildCards, snapshotSchema } from '../shared/model';
 
 // Read-only integration probe. Never launches an agent or edits daemon config.
 const url = process.argv[2];

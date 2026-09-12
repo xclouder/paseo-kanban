@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCards, defaultModeId, emptyStore, filterCards, metadataSchema, resolveStage, taskSchema } from '../src/model.shared';
-import { completeReviewInput, patchInput, createInput } from '../src/contracts.shared';
+import { buildCards, defaultModeId, emptyStore, filterCards, metadataSchema, resolveStage, taskSchema } from '../shared/model';
+import { completeReviewInput, patchInput, createInput } from '../shared/contracts';
 import { fixture } from '../preview/fixture';
 
 test('partial RPC inputs do not introduce defaults or erase unrelated metadata', () => {

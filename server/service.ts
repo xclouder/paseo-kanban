@@ -1,8 +1,8 @@
 import type { PaseoApi, PaseoAgent } from '@getpaseo/client';
-import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type CompleteReviewInput, type CreateInput, type MoveInput, type PatchInput } from './contracts.shared';
-import { buildCards, defaultModeId, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment } from './model.shared';
-import { Store } from './store.server';
-import { applyProjectAction, type ProjectAction } from './projects.shared';
+import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type CompleteReviewInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
+import { buildCards, defaultModeId, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment } from '../shared/model';
+import { Store } from './store';
+import { applyProjectAction, type ProjectAction } from '../shared/projects';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';

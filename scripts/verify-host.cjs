@@ -2,7 +2,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 
-// Use the installed 0.7.2 compiler without installing or enabling this plugin.
+// Use the installed Paseo 0.8 compiler without installing or enabling this plugin.
 const resources = process.env.PASEO_RESOURCES || 'C:/Program Files/Paseo/resources';
 if (!process.env.PASEO_KANBAN_VERIFY_CHILD) {
   const executable = process.env.PASEO_ELECTRON || path.resolve(resources, '../Paseo.exe');
@@ -15,7 +15,7 @@ if (!process.env.PASEO_KANBAN_VERIFY_CHILD) {
   const { compilePlugin } = await import(pathToFileURL(path.join(base, 'compiler.js')).href);
   const { readPluginManifest } = await import(pathToFileURL(path.join(base, 'manifest.js')).href);
   const manifest = await readPluginManifest(process.cwd());
-  const result = await compilePlugin(path.resolve('index.ts'));
+  const result = await compilePlugin({ client: path.resolve('index.client.tsx'), server: path.resolve('index.server.ts') });
   if (!result.clientBundle || !result.serverBundle) throw new Error('Missing runtime bundle');
   console.log(JSON.stringify({ ok: true, pluginId: manifest.id, clientBytes: Buffer.byteLength(result.clientBundle), serverBytes: Buffer.byteLength(result.serverBundle) }, null, 2));
 })().catch(error => { console.error(error); process.exitCode = 1; });

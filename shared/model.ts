@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { projectLayoutSchema } from './projects.shared';
+import { projectLayoutSchema } from './projects';
 
 export const stages = ['todo', 'running', 'blocked', 'review', 'done'] as const;
 export const stageNames: Record<Stage, string> = { todo: '待办', running: '执行中', blocked: '需关注', review: '待审核', done: '已完成' };

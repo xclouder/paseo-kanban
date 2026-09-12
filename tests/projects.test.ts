@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyProjectAction, projectLayoutSchema, projectSections } from '../src/projects.shared';
-import { storeSchema } from '../src/model.shared';
+import { applyProjectAction, projectLayoutSchema, projectSections } from '../shared/projects';
+import { storeSchema } from '../shared/model';
 
 const projects = [{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }, { id: 'c', name: 'Gamma' }];
 test('legacy boards gain an empty layout and new projects remain discoverable after sorting', () => {

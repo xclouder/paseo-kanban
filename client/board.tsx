@@ -1,14 +1,15 @@
 import { createElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import type { PluginSurfaceProps, PluginWorkspacePanelProps, PluginTheme } from '@getpaseo/plugin';
-import { useRpc } from '@getpaseo/plugin';
-import { Icon } from '@getpaseo/plugin/react-native';
+import type { PluginTheme } from '@getpaseo/plugin';
+import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/plugin/client';
+import { useRpc } from '@getpaseo/plugin/client';
+import { Icon } from '@getpaseo/plugin/client/react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { completeReviewCards, createTask, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type MoveInput, type PatchInput } from './contracts.shared';
-import { buildCards, defaultModeId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type Snapshot, type Stage, type Task } from './model.shared';
-import { organizeProjects } from './contracts.shared';
-import type { ProjectAction } from './projects.shared';
-import { ProjectSidebar } from './project-sidebar.client';
+import { completeReviewCards, createTask, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
+import { buildCards, defaultModeId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type Snapshot, type Stage, type Task } from '../shared/model';
+import { organizeProjects } from '../shared/contracts';
+import type { ProjectAction } from '../shared/projects';
+import { ProjectSidebar } from './project-sidebar';
 
 export interface BoardApi {
   organize(action: ProjectAction): Promise<unknown>;

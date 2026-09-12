@@ -1,7 +1,7 @@
-import { defineRpc } from '@getpaseo/plugin/server';
+import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
-import { snapshotSchema, stages, taskSchema } from './model.shared';
-import { projectActionSchema } from './projects.shared';
+import { snapshotSchema, stages, taskSchema } from './model';
+import { projectActionSchema } from './projects';
 
 export const organizeProjects = defineRpc({ name: 'board.organize-projects', input: projectActionSchema, output: z.object({ ok: z.boolean() }) });
 

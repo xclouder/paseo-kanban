@@ -1,1 +1,1 @@
-{ "id": "paseo-kanban" }
+{ "id": "paseo-kanban", "requirements": { "paseo": "^0.8.0" } }

@@ -1,4 +1,4 @@
-import { metadataSchema, taskSchema, type Snapshot } from '../src/model.shared';
+import { metadataSchema, taskSchema, type Snapshot } from '../shared/model';
 
 export function fixture(): Snapshot {
   const time = (minutes: number) => new Date(Date.now() - minutes * 60000).toISOString();

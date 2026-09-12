@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { PluginTheme } from '@getpaseo/plugin';
-import { BoardView, type BoardApi } from '../src/board.client';
-import { buildCards, defaultModeId, metadataSchema, snapshotSchema, taskSchema } from '../src/model.shared';
+import { BoardView, type BoardApi } from '../client/board';
+import { buildCards, defaultModeId, metadataSchema, snapshotSchema, taskSchema } from '../shared/model';
 import { fixture } from './fixture';
-import { applyProjectAction } from '../src/projects.shared';
+import { applyProjectAction } from '../shared/projects';
 import './style.css';
 
 const key = 'paseo-kanban-preview-v1';

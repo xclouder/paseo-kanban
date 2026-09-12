@@ -1,8 +1,8 @@
 import { createElement, useState, type ReactNode } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { Icon } from '@getpaseo/plugin/react-native';
+import { Icon } from '@getpaseo/plugin/client/react-native';
 import type { PluginTheme } from '@getpaseo/plugin';
-import { projectSections, type ProjectAction, type ProjectLayout, type SidebarProject } from './projects.shared';
+import { projectSections, type ProjectAction, type ProjectLayout, type SidebarProject } from '../shared/projects';
 
 type Colors = PluginTheme['colors'];
 const row = { flexDirection: 'row', alignItems: 'center' } as const;

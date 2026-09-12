@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { emptyStore, storeSchema, type BoardStore } from './model.shared';
+import { emptyStore, storeSchema, type BoardStore } from '../shared/model';
 
 /** One daemon-owned writer; never replace damaged data with an empty board. */
 export class Store {

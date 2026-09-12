@@ -1,6 +1,6 @@
 # Paseo Kanban
 
-面向 **Paseo 0.7.2** 的原生任务 / 会话看板插件。把分散在多个工作区的会话汇总为卡片，以类似 Multica 的方式推进任务：记录待办、交给 Agent、查看进度、人工审核、确认完成。
+面向 **Paseo 0.8.x** 的原生任务 / 会话看板插件。把分散在多个工作区的会话汇总为卡片，以类似 Multica 的方式推进任务：记录待办、交给 Agent、查看进度、人工审核、确认完成。
 
 ![桌面看板](docs/screenshots/desktop.png)
 
@@ -15,7 +15,7 @@
 - 在“待审核”列一键将当前筛选范围内的全部任务标记为完成。
 - 置顶、标签、优先级、任务备注、收起与恢复；收起不停止或归档 Paseo 会话。
 - 新建任务保存为草稿；选择实际可用的 Agent 模型，点击“开始执行”后，在所选现有工作区中创建会话并发送任务说明。
-- 新建任务时可拖拽或选择图片、文档等附件；附件随任务保存，并在开始执行时一并交给 Agent。最多 10 个，单个不超过 20 MB，总计不超过 50 MB。
+- 新建任务时可拖拽、粘贴或选择图片、文档等附件；附件随任务保存，并在开始执行时一并交给 Agent。工作区支持关键字过滤，常用模型可设为默认。最多 10 个附件，单个不超过 20 MB，总计不超过 50 MB。
 - 从未启动过的看板任务可在详情中二次确认后永久删除；删除任务时会同时清理其附件。已进入启动流程或已关联会话的任务不会显示删除入口。
 - 新建任务可选择提供商实际支持的运行模式，优先默认 **Full Access**（Claude 对应 **Bypass**）；模式随任务保存并传入 Agent 启动配置。若提供商没有全权限模式，则默认其第一个可用模式；不提供模式列表时沿用 Agent 默认行为。历史任务不自动改变权限。
 - 直接打开对应 Paseo 会话或工作区。
@@ -24,7 +24,7 @@
 
 ## 安装到 Paseo
 
-需要 Paseo **0.7.2**。v0.8 的双入口插件格式尚未适配。
+需要 Paseo **0.8.x**；插件采用 0.8 的客户端 / 服务端双入口格式。
 
 1. 在 Paseo **Settings → Plugins** 中开启 **Enable plugins**。
 2. 在运行 daemon 的电脑上安装此目录：
@@ -43,7 +43,7 @@ paseo plugin ls
 
 3. 状态显示 `running` 后，在侧边栏打开 **任务看板**。也可按 `Ctrl+K` / `⌘K`，搜索 **打开全局任务看板** 或 **打开工作区看板**。
 
-Paseo 提供运行时依赖并编译插件，直接安装本地目录无需先构建网页预览。插件总开关影响该 daemon 的所有插件；本项目不会自动修改它。详见 [Paseo v0.7 官方安装说明](https://paseo.sh/docs/plugins/v0.7#check-and-install-it)。
+Paseo 提供运行时依赖并编译插件，直接安装本地目录无需先构建网页预览。插件总开关影响该 daemon 的所有插件；本项目不会自动修改它。详见 [Paseo v0.8 官方安装说明](https://paseo.sh/docs/plugins/v0.8#install-and-try-it)。
 
 修改源码后：
 
@@ -99,9 +99,9 @@ npx playwright install chromium
 npm run check
 ```
 
-- `npm run typecheck`：类型检查，依赖锁定 Paseo SDK 0.7.2。
+- `npm run typecheck`：类型检查，依赖锁定 Paseo SDK 0.8.0。
 - `npm test`：37 个核心测试，覆盖分页、真实 RPC 校验、状态转换、批量完成的原子性与大列表输入、数据保存、损坏保护、附件持久化 / 启动转交 / 删除恢复与路径保护、任务创建与 Agent 启动去重 / 响应丢失恢复、运行模式默认与持久化、项目排序与分组的旧数据兼容 / 并发保存，以及真实 SDK 的参数转换。
-- `npm run test:e2e`：11 个浏览器场景，覆盖搜索、创建 / 编辑 / 启动、附件拖放与未启动任务删除、模式选择与切换提供商、单个及批量完成、拖动 / 收起 / 恢复、窄屏与运行中完成保护，以及项目 / 分组拖动排序、跨组移动、分组编辑与刷新恢复。
+- `npm run test:e2e`：13 个浏览器场景，覆盖搜索、创建 / 编辑 / 启动、附件拖放 / 粘贴与未启动任务删除、工作区筛选、默认模型、模式选择与切换提供商、侧栏缩放、单个及批量完成、拖动 / 收起 / 恢复、窄屏与运行中完成保护，以及项目 / 分组拖动排序、跨组移动、分组编辑与刷新恢复。
 - `npm run build:preview`：独立网页预览构建。
 - `npm run verify:host`：调用已安装 Windows Paseo 的真实插件编译器，只检查 manifest 和双运行时编译，不安装或启用插件。自定义安装路径可设置 `PASEO_RESOURCES` 和 `PASEO_ELECTRON`。
 
@@ -116,16 +116,17 @@ npx tsx scripts/smoke-daemon.ts ws://127.0.0.1:16767/ws
 ## 代码结构
 
 ```text
-index.ts                    Paseo v0.7 插件注册
-src/board.client.tsx        共用的 React Native UI
-src/model.shared.ts        数据模型、状态映射、搜索与排序
-src/contracts.shared.ts    带验证的 RPC 输入 / 输出
-src/handlers.server.ts     daemon 数据路径与 RPC 绑定
-src/service.server.ts      SDK 集成、任务操作、启动恢复
-src/store.server.ts        串行写入与原子持久化
+index.client.tsx           Paseo 客户端注册
+index.server.ts            Paseo daemon 注册
+client/board.tsx           共用的 React Native UI
+shared/model.ts            数据模型、状态映射、搜索与排序
+shared/contracts.ts        带验证的 RPC 输入 / 输出
+server/handlers.ts         daemon 数据路径与 RPC 绑定
+server/service.ts          SDK 集成、任务操作、启动恢复
+server/store.ts            串行写入与原子持久化
 preview/                   隔离的交互预览
 tests/                     核心测试与浏览器验证
 scripts/                   宿主编译和只读 daemon 检查
 ```
 
-接口参考：[Paseo v0.7 插件文档](https://paseo.sh/docs/plugins/v0.7/reference)、[TypeScript SDK](https://paseo.sh/docs/sdk/quickstart)。工作流灵感来自 [Multica](https://github.com/multica-ai/multica)，未复制其代码。
+接口参考：[Paseo v0.8 插件文档](https://paseo.sh/docs/plugins/v0.8/reference)、[TypeScript SDK](https://paseo.sh/docs/sdk/quickstart)。工作流灵感来自 [Multica](https://github.com/multica-ai/multica)，未复制其代码。

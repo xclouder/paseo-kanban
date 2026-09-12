@@ -1,5 +1,5 @@
 import { createElement } from 'react';
-import type { PluginIconProps } from '@getpaseo/plugin';
+import type { PluginIconProps } from '@getpaseo/plugin/client';
 
 const paths: Record<string, string[]> = {
   ArrowUp: ['M12 19V5', 'm5 12 7-7 7 7'], ArrowDown: ['M12 5v14', 'm5 12 7 7 7-7'],

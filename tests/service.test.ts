@@ -4,10 +4,10 @@ import { access, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createPaseoApi, type PaseoApi } from '@getpaseo/client';
-import { Store } from '../src/store.server';
-import { BoardService, collectPages } from '../src/service.server';
+import { Store } from '../server/store';
+import { BoardService, collectPages } from '../server/service';
 import { fixture } from '../preview/fixture';
-import { emptyStore, metadataSchema, taskSchema } from '../src/model.shared';
+import { emptyStore, metadataSchema, taskSchema } from '../shared/model';
 
 async function setup(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'paseo-kanban-test-'));
