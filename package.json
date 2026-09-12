@@ -1,0 +1,32 @@
+{
+  "name": "paseo-kanban",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A task-first session board for Paseo 0.7.2",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "dev": "vite --host 127.0.0.1",
+    "build:preview": "vite build",
+    "test:e2e": "playwright test",
+    "verify:host": "node scripts/verify-host.cjs",
+    "check": "npm run typecheck && npm test && npm run test:e2e && npm run build:preview"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.7.2",
+    "@playwright/test": "^1.55.0",
+    "@tanstack/react-query": "^5.90.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-web": "^0.21.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0",
+    "zod": "^4.0.0"
+  }
+}
