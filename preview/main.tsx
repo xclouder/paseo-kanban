@@ -7,6 +7,7 @@ import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, met
 import { fixture } from './fixture';
 import { applyProjectAction } from '../shared/projects';
 import './style.css';
+import { installQuickInbox } from '../client/quick-inbox';
 
 const key = 'paseo-kanban-preview-v1';
 const initial = () => { try { const raw = localStorage.getItem(key); return raw ? snapshotSchema.parse(JSON.parse(raw)) : fixture(); } catch { return fixture(); } };
@@ -58,7 +59,8 @@ const api: BoardApi = {
     persist();
     return { ok: true, count: targets.length };
   },
-  create: async input => { const existing = Object.values(data.store.tasks).find(task => task.createRequestId === input.clientRequestId); if (existing) return existing; const now = new Date().toISOString(); const attachments = (input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` })); const task = taskSchema.parse({ ...input, createRequestId: input.clientRequestId, attachments, id: `task:${crypto.randomUUID()}`, createdAt: now, updatedAt: now, stage: 'todo' }); data.store.tasks[task.id] = task; persist(); return task; },
+  create: async input => { const existing = Object.values(data.store.tasks).find(task => task.createRequestId === input.clientRequestId); if (existing) return existing; if (input.inboxId && !data.store.inbox[input.inboxId]) throw new Error('Inbox 条目已不存在，请刷新后重试。'); const now = new Date().toISOString(); const attachments = (input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` })); const task = taskSchema.parse({ ...input, createRequestId: input.clientRequestId, attachments, id: `task:${crypto.randomUUID()}`, createdAt: now, updatedAt: now, stage: 'todo' }); data.store.tasks[task.id] = task; if (input.inboxId) delete data.store.inbox[input.inboxId]; persist(); return task; },
+  removeInbox: async ({ id }) => { if (!data.store.inbox[id]) throw new Error('Inbox 条目不存在，请刷新后重试。'); delete data.store.inbox[id]; persist(); },
   launch: async ({ id }) => {
     const task = data.store.tasks[id]; if (task.agentId) return { agentId: task.agentId };
     task.modeId ??= defaultModeId(data.modes.filter(mode => mode.provider === task.provider.split('/')[0]), task.provider.split('/')[0]);
@@ -72,6 +74,7 @@ const api: BoardApi = {
 };
 const dark: PluginTheme = { colors: { surface0: '#101113', surface1: '#18191c', surface2: '#24262b', border: '#2b2d33', foreground: '#e9eaed', foregroundMuted: '#8a8e98', accent: '#b9a0f5', accentForeground: '#171020', statusSuccess: '#83b69b', statusWarning: '#d5b879', statusDanger: '#df9293' } };
 const light: PluginTheme = { colors: { surface0: '#f7f7f9', surface1: '#ffffff', surface2: '#ededf2', border: '#ddddE4', foreground: '#24242c', foregroundMuted: '#737380', accent: '#7451bb', accentForeground: '#ffffff', statusSuccess: '#357451', statusWarning: '#946200', statusDanger: '#b03d4e' } };
+const paseoDark: PluginTheme = { colors: { surface0: '#181b1a', surface1: '#1e2120', surface2: '#272a29', border: '#252b2a', foreground: '#fafafa', foregroundMuted: '#a1a5a4', accent: '#20744a', accentForeground: '#ffffff', statusSuccess: '#83b69b', statusWarning: '#d5b879', statusDanger: '#d8847b' } };
 const qc = new QueryClient();
 function App() {
   const [compact, setCompact] = useState(innerWidth < 850);
@@ -90,9 +93,18 @@ function App() {
     document.addEventListener('keydown', toggleSidebar);
     return () => document.removeEventListener('keydown', toggleSidebar);
   }, []);
-  const theme = location.search.includes('light') ? light : dark;
+  useEffect(() => installQuickInbox(async input => {
+    data.store.inbox[input.clientRequestId] ??= { id: input.clientRequestId, title: input.title, createdAt: new Date().toISOString() };
+    persist();
+    await qc.invalidateQueries({ queryKey: ['paseo-kanban', 'preview'] });
+  }), []);
+  const hostOnly = location.search.includes('no-board');
+  const theme = hostOnly ? paseoDark : location.search.includes('light') ? light : dark;
+  const stackedBoard = location.search.includes('stacked-board');
   const hostToggleWorks = !location.search.includes('sidebar-button=broken');
   const navigation = useMemo(() => ({ openAgent: ({ agentId }: { agentId: string }) => { document.getElementById('preview-event')!.textContent = `预览：打开会话 ${agentId}`; }, openWorkspace: ({ workspaceId }: { workspaceId: string }) => { document.getElementById('preview-event')!.textContent = `预览：打开工作区 ${workspaceId}`; } }), []);
-  return <QueryClientProvider client={qc}><button id="menu-button" data-testid="menu-button" type="button" aria-hidden tabIndex={-1} onClick={() => { if (hostToggleWorks) setHostSidebarVisible(value => !value); }} style={{ display: 'none' }} />{hostSidebarMounted && <div data-testid="left-sidebar-resize-handle" style={{ display: hostSidebarVisible ? 'block' : 'none', position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }} />}<BoardView theme={theme} host={{ id: 'preview', label: 'Damon 的工作站' }} layout={{ compact, platform: 'web' }} navigation={navigation} api={api} preview /><div id="preview-event" role="status" /></QueryClientProvider>;
+  const board = <BoardView theme={theme} host={{ id: 'preview', label: 'Damon 的工作站' }} layout={{ compact, platform: 'web' }} navigation={navigation} api={api} preview />;
+  if (hostOnly) return <QueryClientProvider client={qc}><main data-testid="host-only" style={{ boxSizing: 'border-box', minHeight: '100vh', padding: 48, background: theme.colors.surface0, color: theme.colors.foreground }}><section data-testid="host-card" style={{ maxWidth: 640, margin: '18vh auto', padding: 24, border: `1px solid ${theme.colors.border}`, borderRadius: 12, background: theme.colors.surface1 }}><h1 style={{ marginTop: 0 }}>Paseo</h1><p style={{ color: theme.colors.foregroundMuted }}>Global shortcut host surface without mounting the board.</p><button data-testid="host-primary" type="button" style={{ padding: '9px 14px', border: 0, borderRadius: 7, background: theme.colors.accent, color: theme.colors.accentForeground }}>Primary action</button></section></main></QueryClientProvider>;
+  return <QueryClientProvider client={qc}><button id="menu-button" data-testid="menu-button" type="button" aria-hidden tabIndex={-1} onClick={() => { if (hostToggleWorks) setHostSidebarVisible(value => !value); }} style={{ display: 'none' }} />{hostSidebarMounted && <div data-testid="left-sidebar-resize-handle" style={{ display: hostSidebarVisible ? 'block' : 'none', position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }} />}{stackedBoard && <div style={{ display: 'none' }}>{board}</div>}{board}<div id="preview-event" role="status" /></QueryClientProvider>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

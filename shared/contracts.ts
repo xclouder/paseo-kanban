@@ -1,6 +1,6 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
-import { snapshotSchema, stages, taskSchema } from './model';
+import { inboxEntrySchema, snapshotSchema, stages, taskSchema } from './model';
 import { projectActionSchema } from './projects';
 
 export const organizeProjects = defineRpc({ name: 'board.organize-projects', input: projectActionSchema, output: z.object({ ok: z.boolean() }) });
@@ -31,12 +31,16 @@ export const patchInput = z.object({ id: z.string().min(1), patch: z.object({
   attachmentAdditions: z.array(createAttachmentInput).max(MAX_ATTACHMENT_FILES).optional(),
 }) });
 export const patchCard = defineRpc({ name: 'board.patch', input: patchInput, output: z.object({ ok: z.boolean() }) });
-export const createInput = z.object({ clientRequestId: z.string().uuid(), title: z.string().trim().min(1).max(180), description: z.string().trim().max(20000), workspaceId: z.string().min(1), provider: z.string().trim().regex(/^[^/]+\/.+$/, '请选择提供商和模型').max(200), modeId: taskSchema.shape.modeId, thinkingOptionId: taskSchema.shape.thinkingOptionId, priority: z.enum(['high', 'medium', 'low']), tags: z.array(z.string().trim().min(1).max(40)).max(12), attachments: z.array(createAttachmentInput).max(MAX_ATTACHMENT_FILES).default([]) });
+export const createInput = z.object({ clientRequestId: z.string().uuid(), inboxId: z.string().uuid().optional(), title: z.string().trim().min(1).max(180), description: z.string().trim().max(20000), workspaceId: z.string().min(1), provider: z.string().trim().regex(/^[^/]+\/.+$/, '请选择提供商和模型').max(200), modeId: taskSchema.shape.modeId, thinkingOptionId: taskSchema.shape.thinkingOptionId, priority: z.enum(['high', 'medium', 'low']), tags: z.array(z.string().trim().min(1).max(40)).max(12), attachments: z.array(createAttachmentInput).max(MAX_ATTACHMENT_FILES).default([]) });
 export const createTask = defineRpc({ name: 'board.create', input: createInput, output: taskSchema });
+export const addInboxInput = z.object({ clientRequestId: z.string().uuid(), title: z.string().trim().min(1).max(180) });
+export const addInboxEntry = defineRpc({ name: 'board.inbox.add', input: addInboxInput, output: inboxEntrySchema });
+export const deleteInboxEntry = defineRpc({ name: 'board.inbox.delete', input: z.object({ id: z.string().uuid() }), output: z.object({ ok: z.boolean() }) });
 export const launchTask = defineRpc({ name: 'board.launch', input: z.object({ id: z.string().min(1) }), output: z.object({ agentId: z.string() }) });
 export const deleteTask = defineRpc({ name: 'board.delete', input: z.object({ id: z.string().min(1) }), output: z.object({ ok: z.boolean() }) });
 export type PatchInput = z.infer<typeof patchInput>;
 export type MoveInput = z.infer<typeof moveInput>;
 export type CompleteReviewInput = z.infer<typeof completeReviewInput>;
 export type CreateInput = z.input<typeof createInput>;
+export type AddInboxInput = z.infer<typeof addInboxInput>;
 export type CreateAttachmentInput = z.infer<typeof createAttachmentInput>;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isOpenBoardShortcut, registerOpenBoardShortcut } from '../client/board-shortcut';
+import { isBoardSurfacePath, isOpenBoardShortcut, openBoardSurfaceOnce, registerOpenBoardShortcut } from '../client/board-shortcut';
 
 const shortcut = (overrides: Partial<Parameters<typeof isOpenBoardShortcut>[0]> = {}) => ({
   altKey: false,
@@ -33,4 +33,29 @@ test('registers and removes the global board shortcut', () => {
   cleanup();
   target.dispatchEvent(keydown());
   assert.equal(opened, 1);
+});
+
+test('does not push another board surface when the board is already active', () => {
+  let opened = 0;
+  assert.equal(isBoardSurfacePath('/h/local/plugin/paseo-kanban/surface/board'), true);
+  assert.equal(isBoardSurfacePath('/h/local/plugin/paseo-kanban/surface/board/'), true);
+  assert.equal(isBoardSurfacePath('/h/local/plugin/paseo-kanban-copy/surface/board'), false);
+  assert.equal(isBoardSurfacePath('/h/local/plugin/paseo-kanban/surface/board-copy'), false);
+  assert.equal(isBoardSurfacePath('/h/local/workspace/main'), false);
+  assert.equal(openBoardSurfaceOnce(() => { opened += 1; }, '/h/local/plugin/paseo-kanban/surface/board'), false);
+  assert.equal(openBoardSurfaceOnce(() => { opened += 1; }, '/h/local/workspace/main'), true);
+  assert.equal(opened, 1);
+});
+
+test('only one duplicate global listener handles the same shortcut event', () => {
+  const target = new EventTarget();
+  let opened = 0;
+  const cleanupFirst = registerOpenBoardShortcut(() => { opened += 1; }, target, () => '/h/local/workspace/main');
+  const cleanupSecond = registerOpenBoardShortcut(() => { opened += 1; }, target, () => '/h/local/workspace/main');
+
+  target.dispatchEvent(Object.assign(new Event('keydown', { cancelable: true }), shortcut()));
+  assert.equal(opened, 1);
+
+  cleanupSecond();
+  cleanupFirst();
 });

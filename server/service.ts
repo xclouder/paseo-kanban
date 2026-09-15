@@ -1,6 +1,6 @@
 import type { PaseoApi, PaseoAgent } from '@getpaseo/client';
-import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type CompleteReviewInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
-import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment } from '../shared/model';
+import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
+import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, inboxEntrySchema, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment } from '../shared/model';
 import { Store } from './store';
 import { applyProjectAction, type ProjectAction } from '../shared/projects';
 import { createHash, randomUUID } from 'node:crypto';
@@ -280,9 +280,27 @@ export class BoardService {
       return { ok: true, count: cards.length };
     });
   }
+  async addInbox(input: AddInboxInput) {
+    return this.store.update(data => {
+      const existing = data.inbox[input.clientRequestId];
+      if (existing) return existing;
+      const entry = inboxEntrySchema.parse({ id: input.clientRequestId, title: input.title, createdAt: new Date().toISOString() });
+      data.inbox[entry.id] = entry;
+      return entry;
+    });
+  }
+  async deleteInbox(id: string) {
+    return this.store.update(data => {
+      if (!data.inbox[id]) throw new Error('Inbox 条目不存在，请刷新后重试。');
+      delete data.inbox[id];
+      return { ok: true };
+    });
+  }
   async create(input: CreateInput, paseo: PaseoApi) {
-    const persisted = Object.values((await this.store.read()).tasks).find(task => task.createRequestId === input.clientRequestId);
+    const initial = await this.store.read();
+    const persisted = Object.values(initial.tasks).find(task => task.createRequestId === input.clientRequestId);
     if (persisted) return persisted;
+    if (input.inboxId && !initial.inbox[input.inboxId]) throw new Error('Inbox 条目已不存在，请刷新后重试。');
     if (!/^[^/]+\/.+$/.test(input.provider)) throw new Error('请选择具体的 Agent 模型。');
     const workspace = await paseo.workspaces.ref(input.workspaceId).refresh();
     if (!workspace) throw new Error('工作区已不存在，请重新选择。');
@@ -306,13 +324,15 @@ export class BoardService {
       const data = await this.store.read();
       const existing = Object.values(data.tasks).find(task => task.createRequestId === input.clientRequestId);
       if (existing) return existing;
+      if (input.inboxId && !data.inbox[input.inboxId]) throw new Error('Inbox 条目已不存在，请刷新后重试。');
       const now = new Date().toISOString();
       const taskId = `task:${randomUUID()}`;
-      const { attachments = [], clientRequestId, ...fields } = input;
+      const { attachments = [], clientRequestId, inboxId, ...fields } = input;
       try {
         const storedAttachments = await this.saveAttachments(taskId, attachments);
         const task = taskSchema.parse({ ...fields, modeId, thinkingOptionId, createRequestId: clientRequestId, attachments: storedAttachments, id: taskId, createdAt: now, updatedAt: now, stage: 'todo' });
         data.tasks[task.id] = task;
+        if (inboxId) delete data.inbox[inboxId];
         await this.store.write(data);
         return task;
       } catch (error) {

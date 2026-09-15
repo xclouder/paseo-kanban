@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCards, defaultModeId, defaultThinkingOptionId, emptyStore, filterCards, metadataSchema, resolveStage, taskSchema } from '../shared/model';
+import { buildCards, defaultModeId, defaultThinkingOptionId, emptyStore, filterCards, metadataSchema, resolveStage, storeSchema, taskSchema } from '../shared/model';
 import { completeReviewInput, patchInput, createInput } from '../shared/contracts';
 import { fixture } from '../preview/fixture';
 
@@ -11,6 +11,10 @@ test('partial RPC inputs do not introduce defaults or erase unrelated metadata',
   Object.assign(meta, input.patch);
   assert.equal(meta.description, 'keep'); assert.deepEqual(meta.tags, ['retain']); assert.equal(meta.priority, 'high'); assert.equal(meta.hidden, true);
   assert.deepEqual(patchInput.parse({ id: 'agent:one', patch: { hidden: true } }).patch, { hidden: true });
+});
+test('legacy board files gain an empty Inbox without a version migration', () => {
+  const store = storeSchema.parse({ version: 1, sessions: {}, tasks: {} });
+  assert.deepEqual(store.inbox, {});
 });
 test('draft patches accept a workspace and newly pasted attachments without adding defaults', () => {
   const attachment = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', fileName: 'pasted.png', mimeType: 'image/png', size: 3, dataBase64: Buffer.from('abc').toString('base64') };

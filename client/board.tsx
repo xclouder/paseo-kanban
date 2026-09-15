@@ -5,11 +5,13 @@ import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/pl
 import { useRpc } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { completeReviewCards, createTask, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
-import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type Snapshot, type Stage, type Task, type TaskAttachment, type Workspace } from '../shared/model';
+import { completeReviewCards, createTask, deleteInboxEntry, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
+import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type InboxEntry, type Snapshot, type Stage, type Task, type TaskAttachment, type Workspace } from '../shared/model';
 import { organizeProjects } from '../shared/contracts';
 import type { ProjectAction } from '../shared/projects';
 import { ProjectSidebar } from './project-sidebar';
+import { INBOX_CHANGED_EVENT, QUICK_INBOX_MODAL_TEST_ID, setQuickInboxPalette } from './quick-inbox';
+import { BOARD_KEYBOARD_SCOPE_TEST_ID_PREFIX, isActiveBoardKeyboardScope } from './board-shortcut';
 
 export interface BoardApi {
   organize(action: ProjectAction): Promise<unknown>;
@@ -18,6 +20,7 @@ export interface BoardApi {
   move(input: MoveInput): Promise<unknown>;
   completeReview(input: CompleteReviewInput): Promise<{ ok: boolean; count: number }>;
   create(input: CreateInput): Promise<Task>;
+  removeInbox(input: { id: string }): Promise<unknown>;
   launch(input: { id: string }): Promise<{ agentId: string }>;
   remove(input: { id: string }): Promise<unknown>;
 }
@@ -30,8 +33,8 @@ export function KanbanWorkspace(props: PluginWorkspacePanelProps) {
 }
 function ConnectedBoard(props: PluginSurfaceProps & { workspaceId?: string }) {
   const organize = useRpc(organizeProjects);
-  const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), create = useRpc(createTask), launch = useRpc(launchTask), remove = useRpc(deleteTask);
-  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, create, launch, remove, organize }), [read, patch, move, completeReview, create, launch, remove, organize]);
+  const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), create = useRpc(createTask), removeInbox = useRpc(deleteInboxEntry), launch = useRpc(launchTask), remove = useRpc(deleteTask);
+  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, create, removeInbox, launch, remove, organize }), [read, patch, move, completeReview, create, removeInbox, launch, remove, organize]);
   return <BoardView {...props} api={api} />;
 }
 
@@ -217,10 +220,13 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const [attention, setAttention] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [inboxView, setInboxView] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createSource, setCreateSource] = useState<{ id: string; title: string } | null>(null);
   const [createDirty, setCreateDirty] = useState(false);
   const [confirmingCreateClose, setConfirmingCreateClose] = useState(false);
   const [createCloseBlocked, setCreateCloseBlocked] = useState(false);
+  const keyboardScopeTestId = useRef(`${BOARD_KEYBOARD_SCOPE_TEST_ID_PREFIX}${clientUuid()}`).current;
   const [paseoSidebarVisible, setPaseoSidebarVisible] = useState(false);
   const creatingRef = useRef(creating), createDirtyRef = useRef(createDirty), confirmingCreateCloseRef = useRef(confirmingCreateClose);
   creatingRef.current = creating; createDirtyRef.current = createDirty; confirmingCreateCloseRef.current = confirmingCreateClose;
@@ -243,21 +249,31 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const changeCreateDirty = (dirty: boolean) => { createDirtyRef.current = dirty; setCreateDirty(dirty); };
   const hideCreateConfirmation = () => { confirmingCreateCloseRef.current = false; setConfirmingCreateClose(false); };
   const changeCreateCloseBlocked = (blocked: boolean) => { createCloseBlockedRef.current = blocked; setCreateCloseBlocked(blocked); };
-  const openCreate = () => { changeCreateDirty(false); changeCreateCloseBlocked(false); hideCreateConfirmation(); creatingRef.current = true; setCreating(true); };
+  const openCreate = (source?: { id: string; title: string }) => { setCreateSource(source ?? null); changeCreateDirty(false); changeCreateCloseBlocked(false); hideCreateConfirmation(); creatingRef.current = true; setCreating(true); };
   const requestCreateClose = () => {
     if (mutationPendingRef.current || createCloseBlockedRef.current) return;
     if (createDirtyRef.current) { confirmingCreateCloseRef.current = true; setConfirmingCreateClose(true); }
-    else { creatingRef.current = false; setCreating(false); }
+    else { creatingRef.current = false; setCreating(false); setCreateSource(null); }
   };
-  const discardCreate = () => { changeCreateDirty(false); hideCreateConfirmation(); creatingRef.current = false; setCreating(false); };
+  const discardCreate = () => { changeCreateDirty(false); hideCreateConfirmation(); creatingRef.current = false; setCreating(false); setCreateSource(null); };
   useEffect(() => {
     if (!message || message.error) return;
     const timer = setTimeout(() => setMessage(null), 3500);
     return () => clearTimeout(timer);
   }, [message]);
   useEffect(() => {
+    if (layout.platform !== 'web') return;
+    setQuickInboxPalette({
+      surface0: c.surface0, surface1: c.surface1, surface2: c.surface2, border: c.border,
+      foreground: c.foreground, foregroundMuted: c.foregroundMuted, accent: c.accent,
+      accentForeground: c.accentForeground, statusDanger: c.statusDanger,
+    });
+  }, [c.accent, c.accentForeground, c.border, c.foreground, c.foregroundMuted, c.statusDanger, c.surface0, c.surface1, c.surface2, layout.platform]);
+  useEffect(() => {
     if (layout.platform !== 'web' || typeof window === 'undefined') return;
     const onKey = (event: KeyboardEvent) => {
+      if (!isActiveBoardKeyboardScope(keyboardScopeTestId)) return;
+      if (document.querySelector(`[data-testid="${QUICK_INBOX_MODAL_TEST_ID}"]`)) return;
       if (event.key === 'Escape' && event.type === 'keyup' && handledCreateEscapeRef.current) {
         event.preventDefault(); event.stopImmediatePropagation(); handledCreateEscapeRef.current = false;
         return;
@@ -274,14 +290,20 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
       if (creatingRef.current) return;
       const target = event.target as HTMLElement;
       if (target.closest('input, textarea, [contenteditable="true"]') || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (event.key === '/') { event.preventDefault(); search.current?.focus(); }
-      if (event.key.toLowerCase() === 'n') { event.preventDefault(); openCreate(); }
-      if (event.key === 'Escape') setSelected(null);
+      if (event.key === '/') { event.preventDefault(); event.stopImmediatePropagation(); search.current?.focus(); }
+      if (event.key.toLowerCase() === 'n') { event.preventDefault(); event.stopImmediatePropagation(); openCreate(); }
+      if (event.key === 'Escape' && selected) { event.stopImmediatePropagation(); setSelected(null); }
     };
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', onKey, true);
     return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKey, true); };
-  }, [layout.platform]);
+  }, [keyboardScopeTestId, layout.platform, selected]);
+  useEffect(() => {
+    if (layout.platform !== 'web' || typeof document === 'undefined') return;
+    const refreshInbox = () => { void board.refetch(); };
+    document.addEventListener(INBOX_CHANGED_EVENT, refreshInbox);
+    return () => document.removeEventListener(INBOX_CHANGED_EVENT, refreshInbox);
+  }, [board.refetch, layout.platform]);
   useEffect(() => {
     if (layout.platform !== 'web' || typeof window === 'undefined') return;
     const savedWidth = Number(window.localStorage.getItem(`paseo-kanban:sidebar-width:${host.id}`));
@@ -362,7 +384,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const count = (id?: string) => scope.filter(card => !card.hidden && (!id || card.projectId === id)).length;
   const move = (id: string, stage: Stage, beforeId?: string) => { setDragging(null); void run(() => api.move({ id, stage, beforeId }), `已移至${stageNames[stage]}`); };
   const completeReview = (ids: string[]) => { void run(() => api.completeReview({ ids }), `已将 ${ids.length} 个待审核任务标记为完成`); };
-  const reset = () => { setQuery(''); setProject(''); setProvider(''); setPinned(false); setAttention(false); setHidden(false); };
+  const reset = () => { setInboxView(false); setQuery(''); setProject(''); setProvider(''); setPinned(false); setAttention(false); setHidden(false); };
 
   const sidebarItem = (text: string, icon: string, selectedItem: boolean, onPress: () => void, amount?: number) => <Pressable key={text} accessibilityRole="button" onPress={onPress} style={{ ...row, gap: 9, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 7, backgroundColor: selectedItem ? c.surface2 : 'transparent' }}>
     <Icon name={icon} size={15} color={selectedItem ? c.foreground : c.foregroundMuted} />
@@ -377,13 +399,14 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     remove={() => run(() => api.remove({ id: active.id }), '任务已删除')}
   />;
 
-  return <View style={{ flex: 1, backgroundColor: c.surface0, minHeight: 0 }}>
+  return <View testID={keyboardScopeTestId} style={{ flex: 1, backgroundColor: c.surface0, minHeight: 0 }}>
     {preview && <View style={{ ...row, backgroundColor: c.surface2, justifyContent: 'center', padding: 8, gap: 8 }}><Icon name="FlaskConical" size={13} color={c.statusWarning} /><Text style={{ color: c.foregroundMuted, fontSize: 11 }}>交互预览 · 使用示例数据，不会操作真实 Paseo 会话</Text></View>}
     <View style={{ flex: 1, flexDirection: 'row', minHeight: 0 }}>
       {!layout.compact && !workspaceId && <View testID="board-sidebar" style={{ width: sidebarWidth, position: 'relative', borderRightWidth: 1, borderRightColor: c.border, padding: 16, paddingTop: 24 }}>
         <View style={{ ...row, gap: 10, paddingHorizontal: 8, marginBottom: 30 }}><Icon name="PanelsTopLeft" size={23} color={c.accent} /><Text style={{ color: c.foreground, fontSize: 18, fontWeight: '700', letterSpacing: -0.6 }}>paseo<Text style={{ color: c.foregroundMuted, fontWeight: '400' }}> / board</Text></Text></View>
         <Label c={c}>工作台</Label>
-        {sidebarItem('全部任务', 'LayoutGrid', !project && !pinned && !attention && !hidden, reset, count())}
+        {sidebarItem('Inbox', 'Inbox', inboxView, () => { reset(); setInboxView(true); }, Object.keys(board.data?.store.inbox ?? {}).length)}
+        {sidebarItem('全部任务', 'LayoutGrid', !inboxView && !project && !pinned && !attention && !hidden, reset, count())}
         {sidebarItem('需要我处理', 'Inbox', attention, () => { reset(); setAttention(true); }, scope.filter(x => !x.hidden && ['blocked', 'review'].includes(x.stage)).length)}
         {sidebarItem('已置顶', 'Pin', pinned, () => { reset(); setPinned(true); }, scope.filter(x => !x.hidden && x.pinned).length)}
         <View style={{ height: 28 }} />
@@ -408,12 +431,13 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
               </Pressable>)}
             <View style={{ flex: 1 }}>
               <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: 9 }}>工作台 / {workspaceId ? '工作区看板' : '任务看板'}</Text>
-              <View style={{ ...row, gap: 12 }}><Text accessibilityRole="header" style={{ color: c.foreground, fontSize: layout.compact ? 24 : 28, fontWeight: '700', letterSpacing: -0.8 }}>{hidden ? '已收起的任务' : pinned ? '置顶任务' : attention ? '需要我处理' : projects.find(p => p.id === project)?.name ?? '所有任务，一目了然'}</Text><Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{visible.length}</Text></View>
-              {!layout.compact && <Text style={{ color: c.foregroundMuted, fontSize: 12, marginTop: 8 }}>从想法到交付，把每一段会话放回工作流。</Text>}
+              <View style={{ ...row, gap: 12 }}><Text accessibilityRole="header" style={{ color: c.foreground, fontSize: layout.compact ? 24 : 28, fontWeight: '700', letterSpacing: -0.8 }}>{inboxView ? 'Inbox' : hidden ? '已收起的任务' : pinned ? '置顶任务' : attention ? '需要我处理' : projects.find(p => p.id === project)?.name ?? '所有任务，一目了然'}</Text><Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{inboxView ? Object.keys(board.data?.store.inbox ?? {}).length : visible.length}</Text></View>
+              {!layout.compact && <Text style={{ color: c.foregroundMuted, fontSize: 12, marginTop: 8 }}>{inboxView ? '快速收集想法，准备好后再补全信息并创建任务。' : '从想法到交付，把每一段会话放回工作流。'}</Text>}
             </View>
-            <Button c={c} primary icon="Plus" onPress={openCreate} disabled={busy}>新建任务</Button>
+            <Button c={c} icon={inboxView ? 'LayoutGrid' : 'Inbox'} active={inboxView} onPress={() => { if (inboxView) reset(); else { reset(); setInboxView(true); } }}>{inboxView ? '返回看板' : 'Inbox'}</Button>
+            <Button c={c} primary icon="Plus" onPress={() => openCreate()} disabled={busy}>新建任务</Button>
           </View>
-          <View style={{ ...wrap, gap: 10 }}>
+          {!inboxView && <View style={{ ...wrap, gap: 10 }}>
             <View style={{ ...row, flexGrow: 1, flexShrink: 1, minWidth: 190, maxWidth: 400, gap: 9, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1, borderRadius: 7, paddingHorizontal: 11 }}>
               <Icon name="Search" size={15} color={c.foregroundMuted} />
               <TextInput ref={search} accessibilityLabel="搜索任务" placeholder="搜索任务、标签、工作区或会话 ID…" placeholderTextColor={c.foregroundMuted} value={query} onChangeText={setQuery} style={{ flex: 1, color: c.foreground, fontSize: 12, height: 36, minWidth: 0 }} />
@@ -425,8 +449,8 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
             <View style={{ flex: 1 }} />
             {mutation.isPending ? <ActivityIndicator size="small" color={c.accent} /> : <Text style={{ color: c.foregroundMuted, fontSize: 10 }}>{board.isFetching ? '同步中' : '每 5 秒同步'}</Text>}
             <Button c={c} icon="RefreshCw" label="刷新看板" onPress={() => void board.refetch()} disabled={board.isFetching} />
-          </View>
-          {(layout.compact || provider || (board.data?.providers.length ?? 0) > 1) && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ ...row, gap: 7 }}>
+          </View>}
+          {!inboxView && (layout.compact || provider || (board.data?.providers.length ?? 0) > 1) && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ ...row, gap: 7 }}>
             <Text style={{ color: c.foregroundMuted, fontSize: 11, marginRight: 4 }}>Agent</Text>
             <Button c={c} small active={!provider} onPress={() => setProvider('')}>全部</Button>
             {[...new Set([...(board.data?.providers ?? []), ...all.map(card => card.provider)])].filter(Boolean).map(p => <Button key={p} c={c} small active={provider === p} onPress={() => setProvider(p)}>{p}</Button>)}
@@ -438,14 +462,14 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
           <Text style={{ flex: 1, color: board.isError || message?.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{board.isError ? `同步失败，操作已暂停。${errorText(board.error)}` : message?.text}</Text>
           <Button c={c} small onPress={() => board.isError ? void board.refetch() : setMessage(null)}>{board.isError ? '重试' : '关闭'}</Button>
         </View>}
-        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
+        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} busy={busy} createTask={entry => openCreate(entry)} remove={id => run(() => api.removeInbox({ id }), 'Inbox 条目已删除')} /> : <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {visible.length === 0 && <View style={{ padding: 16, ...row, gap: 12 }}><Icon name="Search" size={17} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 12, flex: 1 }}>{all.length ? '没有符合条件的任务。试试清除筛选，或查看已收起任务。' : '还没有会话。新建一个任务，或在 Paseo 中打开会话后刷新。'}</Text>{all.length > 0 && <Button c={c} small onPress={reset}>清除筛选</Button>}</View>}
             <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: layout.compact ? 12 : 24, gap: 15, flexGrow: 1 }} showsHorizontalScrollIndicator>
               {stages.map(stage => {
                 const cards = visible.filter(card => card.stage === stage);
                 return <View key={stage} testID={`column-${stage}`} style={{ width: layout.compact ? 280 : 268, flexGrow: 1, minHeight: 200 }}>
-                  <View style={{ ...row, gap: 8, marginBottom: 17, paddingHorizontal: 3 }}><Icon name={stageIcons[stage]} size={16} color={stageColor(stage, c)} /><Text style={{ color: c.foreground, fontSize: 12, fontWeight: '600' }}>{stageNames[stage]}</Text><Text style={{ color: c.foregroundMuted, fontSize: 11, marginLeft: 4 }}>{cards.length}</Text><View style={{ flex: 1 }} />{stage === 'review' && cards.length > 0 && <Button c={c} small icon="CheckCheck" label={`完成当前筛选的 ${cards.length} 个待审核任务`} disabled={busy} onPress={() => completeReview(cards.map(card => card.id))}>完成当前 {cards.length} 项</Button>}{stage === 'todo' && <Pressable accessibilityRole="button" accessibilityLabel="添加待办" disabled={busy} onPress={openCreate}><Icon name="Plus" size={16} color={c.foregroundMuted} /></Pressable>}</View>
+                  <View style={{ ...row, gap: 8, marginBottom: 17, paddingHorizontal: 3 }}><Icon name={stageIcons[stage]} size={16} color={stageColor(stage, c)} /><Text style={{ color: c.foreground, fontSize: 12, fontWeight: '600' }}>{stageNames[stage]}</Text><Text style={{ color: c.foregroundMuted, fontSize: 11, marginLeft: 4 }}>{cards.length}</Text><View style={{ flex: 1 }} />{stage === 'review' && cards.length > 0 && <Button c={c} small icon="CheckCheck" label={`完成当前筛选的 ${cards.length} 个待审核任务`} disabled={busy} onPress={() => completeReview(cards.map(card => card.id))}>完成当前 {cards.length} 项</Button>}{stage === 'todo' && <Pressable accessibilityRole="button" accessibilityLabel="添加待办" disabled={busy} onPress={() => openCreate()}><Icon name="Plus" size={16} color={c.foregroundMuted} /></Pressable>}</View>
                   <DropZone enabled={layout.platform === 'web' && !busy} onDrop={id => move(id, stage)}>
                     <ScrollView style={{ flex: 1, borderRadius: 9, backgroundColor: c.surface0, borderWidth: dragging ? 1 : 0, borderColor: c.border }} contentContainerStyle={{ gap: 10, paddingBottom: 32, minHeight: 150 }}>
                       {cards.map(card => <DropZone key={card.id} item enabled={layout.platform === 'web' && !busy} onDrop={id => { if (id !== card.id) move(id, stage, card.id); }}>
@@ -469,7 +493,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     <Modal visible={creating} transparent animationType="fade" onRequestClose={requestCreateClose}>
       <View style={{ flex: 1, backgroundColor: c.surface0, alignItems: 'center', justifyContent: 'center', padding: layout.compact ? 12 : 28 }}>
         <View style={{ width: '100%', maxWidth: 560, maxHeight: '95%', backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 14, overflow: 'hidden' }}>
-          {creating && <CreateForm c={c} snapshot={board.data} workspaceId={workspaceId} projectId={project} web={layout.platform === 'web'} shortcutEnabled={!confirmingCreateClose} busy={busy} defaultModel={defaultModel} setDefaultModel={saveDefaultModel} onDirtyChange={changeCreateDirty} onCloseBlockedChange={changeCreateCloseBlocked} close={requestCreateClose} create={async input => { let task: Task | undefined; const ok = await run(async () => { task = await api.create(input); }); if (ok && task) { reset(); changeCreateDirty(false); changeCreateCloseBlocked(false); setSelected(task.id); creatingRef.current = false; setCreating(false); } return ok; }} />}
+          {creating && <CreateForm c={c} snapshot={board.data} workspaceId={workspaceId} projectId={project} web={layout.platform === 'web'} shortcutEnabled={!confirmingCreateClose} busy={busy} defaultModel={defaultModel} initialTitle={createSource?.title} inboxId={createSource?.id} setDefaultModel={saveDefaultModel} onDirtyChange={changeCreateDirty} onCloseBlockedChange={changeCreateCloseBlocked} close={requestCreateClose} create={async input => { let task: Task | undefined; const ok = await run(async () => { task = await api.create(input); }); if (ok && task) { reset(); changeCreateDirty(false); changeCreateCloseBlocked(false); setCreateSource(null); setSelected(task.id); creatingRef.current = false; setCreating(false); } return ok; }} />}
         </View>
       </View>
     </Modal>
@@ -477,6 +501,26 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.58)', alignItems: 'center', justifyContent: 'center', padding: 20 }}><View accessibilityRole="alert" style={{ width: '100%', maxWidth: 390, backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 22 }}><View style={{ ...row, gap: 9, marginBottom: 10 }}><Icon name="CircleAlert" size={18} color={c.statusWarning} /><Text style={{ flex: 1, color: c.foreground, fontSize: 16, fontWeight: '600' }}>放弃未保存的修改？</Text></View><Text style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 19, marginBottom: 20 }}>任务内容和已添加的附件将会丢失。</Text><View style={{ ...row, justifyContent: 'flex-end', gap: 9 }}><Button c={c} onPress={discardCreate}>放弃修改</Button><Button c={c} primary onPress={hideCreateConfirmation}>继续编辑</Button></View></View></View>
     </Modal>
   </View>;
+}
+
+function InboxPanel({ c, entries, busy, createTask, remove }: { c: Colors; entries: InboxEntry[]; busy: boolean; createTask(entry: InboxEntry): void; remove(id: string): Promise<boolean> }) {
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const sorted = [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+  return <ScrollView testID="inbox-panel" style={{ flex: 1 }} contentContainerStyle={{ width: '100%', maxWidth: 820, alignSelf: 'center', padding: 24, gap: 10 }}>
+    {!sorted.length ? <View style={{ minHeight: 240, alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: c.border, borderRadius: 12 }}>
+      <Icon name="Inbox" size={28} color={c.foregroundMuted} />
+      <Text style={{ color: c.foreground, fontSize: 14, fontWeight: '600' }}>Inbox 还是空的</Text>
+      <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>在 Paseo 任意位置按 Ctrl+Shift+I 快速记下一项。</Text>
+    </View> : sorted.map(entry => <View key={entry.id} testID={`inbox-entry-${entry.id}`} style={{ ...row, gap: 14, padding: 15, borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.surface1 }}>
+      <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>
+      <View style={{ flex: 1, minWidth: 0 }}><Text style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}</Text></View>
+      <Button c={c} small primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button>
+      <Button c={c} small icon="Trash2" disabled={busy} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
+        if (confirmDelete !== entry.id) { setConfirmDelete(entry.id); return; }
+        void remove(entry.id).then(ok => { if (ok) setConfirmDelete(null); });
+      }}>{confirmDelete === entry.id ? '确认删除' : undefined}</Button>
+    </View>)}
+  </ScrollView>;
 }
 
 function TaskCard({ card, c, selected, busy, onSelect, onPin }: { card: Card; c: Colors; selected: boolean; busy: boolean; onSelect(): void; onPin(): void }) {
@@ -656,9 +700,9 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, close,
   </>;
 }
 
-function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled, busy, defaultModel, setDefaultModel, onDirtyChange, onCloseBlockedChange, close, create }: { c: Colors; snapshot?: Snapshot; workspaceId?: string; projectId: string; web: boolean; shortcutEnabled: boolean; busy: boolean; defaultModel: string; setDefaultModel(model: string): void; onDirtyChange(dirty: boolean): void; onCloseBlockedChange(blocked: boolean): void; close(): void; create(input: CreateInput): Promise<boolean> }) {
+function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled, busy, defaultModel, initialTitle = '', inboxId, setDefaultModel, onDirtyChange, onCloseBlockedChange, close, create }: { c: Colors; snapshot?: Snapshot; workspaceId?: string; projectId: string; web: boolean; shortcutEnabled: boolean; busy: boolean; defaultModel: string; initialTitle?: string; inboxId?: string; setDefaultModel(model: string): void; onDirtyChange(dirty: boolean): void; onCloseBlockedChange(blocked: boolean): void; close(): void; create(input: CreateInput): Promise<boolean> }) {
   const [clientRequestId] = useState(clientUuid);
-  const [title, setTitle] = useState(''), [description, setDescription] = useState(''), [tags, setTags] = useState('');
+  const [title, setTitle] = useState(initialTitle), [description, setDescription] = useState(''), [tags, setTags] = useState('');
   const [attachments, setAttachments] = useState<CreateAttachmentInput[]>([]);
   const initialWorkspace = useRef(workspaceId ?? snapshot?.workspaces.find(w => !projectId || w.projectId === projectId)?.id ?? '').current;
   const [workspace, setWorkspace] = useState(initialWorkspace);
@@ -687,15 +731,16 @@ function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled,
     if (!title.trim()) { setError('请填写任务标题。'); return; }
     if (title.length > 180 || description.length > 20000 || parsed.length > 12 || parsed.some(t => t.length > 40)) { setError('标题最多 180 字，说明最多 20000 字，标签最多 12 个且各不超过 40 字。'); return; }
     onCloseBlockedChange(true); setSubmitting(true); setError('');
-    const ok = await create({ clientRequestId, title: title.trim(), description: description.trim(), tags: parsed, workspaceId: workspace, provider, modeId, thinkingOptionId, priority, attachments });
+    const ok = await create({ clientRequestId, ...(inboxId ? { inboxId } : {}), title: title.trim(), description: description.trim(), tags: parsed, workspaceId: workspace, provider, modeId, thinkingOptionId, priority, attachments });
     if (!ok) { onCloseBlockedChange(false); setError('创建失败，任务尚未保存。请关闭弹窗查看错误详情后重试。'); setSubmitting(false); }
   };
   useEffect(() => {
-    onDirtyChange(Boolean(title || description || tags || attachments.length || workspace !== initialWorkspace || provider !== initialProvider || modeId !== initialModeId || thinkingOptionId !== initialThinkingOptionId || priority !== 'medium'));
-  }, [attachments.length, description, initialModeId, initialProvider, initialThinkingOptionId, initialWorkspace, modeId, onDirtyChange, priority, provider, tags, thinkingOptionId, title, workspace]);
+    onDirtyChange(Boolean(title !== initialTitle || description || tags || attachments.length || workspace !== initialWorkspace || provider !== initialProvider || modeId !== initialModeId || thinkingOptionId !== initialThinkingOptionId || priority !== 'medium'));
+  }, [attachments.length, description, initialModeId, initialProvider, initialThinkingOptionId, initialTitle, initialWorkspace, modeId, onDirtyChange, priority, provider, tags, thinkingOptionId, title, workspace]);
   useEffect(() => {
     if (!web || !shortcutEnabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (document.querySelector(`[data-testid="${QUICK_INBOX_MODAL_TEST_ID}"]`)) return;
       if (event.ctrlKey && event.key === 'Enter') {
         event.preventDefault();
         void submit();
@@ -705,7 +750,7 @@ function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled,
     return () => document.removeEventListener('keydown', onKeyDown, true);
   });
   return <>
-    <View style={{ ...row, padding: 20, borderBottomWidth: 1, borderBottomColor: c.border }}><View style={{ flex: 1 }}><Text accessibilityRole="header" style={{ color: c.foreground, fontSize: 19, fontWeight: '600' }}>新建任务</Text><Text style={{ color: c.foregroundMuted, fontSize: 11, marginTop: 6 }}>先记录想法，准备好后再交给 Agent。</Text></View><Button c={c} icon="X" label="关闭新建任务" onPress={close} disabled={submitting || readingAttachments} /></View>
+    <View style={{ ...row, padding: 20, borderBottomWidth: 1, borderBottomColor: c.border }}><View style={{ flex: 1 }}><Text accessibilityRole="header" style={{ color: c.foreground, fontSize: 19, fontWeight: '600' }}>{inboxId ? '从 Inbox 创建任务' : '新建任务'}</Text><Text style={{ color: c.foregroundMuted, fontSize: 11, marginTop: 6 }}>{inboxId ? '补全工作区和执行设置，保存后该条目会离开 Inbox。' : '先记录想法，准备好后再交给 Agent。'}</Text></View><Button c={c} icon="X" label="关闭新建任务" onPress={close} disabled={submitting || readingAttachments} /></View>
     <ScrollView contentContainerStyle={{ padding: 22 }}>
       <Input c={c} label="任务标题" value={title} onChangeText={value => { onDirtyChange(true); setTitle(value); }} placeholder="这次想完成什么？" />
       <Input c={c} label="任务说明" value={description} onChangeText={value => { onDirtyChange(true); setDescription(value); }} multiline placeholder="目标、涉及的文件，以及怎样才算完成…" />

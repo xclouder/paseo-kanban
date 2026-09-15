@@ -35,6 +35,9 @@ export function fixture(): Snapshot {
     ],
     store: {
       version: 1,
+      inbox: {
+        '11111111-1111-4111-8111-111111111111': { id: '11111111-1111-4111-8111-111111111111', title: '整理下周迭代要处理的体验问题', createdAt: time(18) },
+      },
       projectLayout: { groups: [], order: [], membership: {} },
       sessions: Object.fromEntries(specs.map(([id, , , , , , tags], i) => [id, metadataSchema.parse({ tags: [...tags], pinned: i === 0, priority: i === 2 ? 'high' : 'medium', stage: i >= 6 ? 'done' : undefined, stageTurn: agents[i].lastUserMessageAt, description: ['完成登录后正确恢复来源页面，并覆盖 token 过期的边界情况。', '分析会话列表的渲染开销，给出优化前后的性能对比。', '迁移脚本在测试环境执行失败，需要确认数据库连接配置。', '等待授权后，继续验证签名与事件去重逻辑。', '交互改动已完成，请检查搜索、快捷键和窄屏布局。', '主要异常路径已覆盖，等待审核测试结果。', '统一卡片、表单与浮层的主题色。', '修正安全区域，已在窄屏完成回归。'][i] })])),
       tasks: Object.fromEntries([

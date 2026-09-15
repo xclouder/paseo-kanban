@@ -37,10 +37,17 @@ export const taskSchema = metadataSchema.extend({
   attachments: z.array(taskAttachmentSchema).default([]),
 });
 export type Task = z.infer<typeof taskSchema>;
+export const inboxEntrySchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().trim().min(1).max(180),
+  createdAt: z.string(),
+});
+export type InboxEntry = z.infer<typeof inboxEntrySchema>;
 export const storeSchema = z.object({
   version: z.literal(1),
   sessions: z.record(z.string(), metadataSchema),
   tasks: z.record(z.string(), taskSchema),
+  inbox: z.record(z.string(), inboxEntrySchema).default({}),
   projectLayout: projectLayoutSchema.default(() => projectLayoutSchema.parse({})),
 });
 export type BoardStore = z.infer<typeof storeSchema>;

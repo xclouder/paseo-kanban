@@ -1,5 +1,92 @@
 import { expect, test } from '@playwright/test';
 
+test('capture a global Inbox item and convert it into a task', async ({ page }) => {
+  await page.goto('/');
+  const boardSurface = await page.getByTestId('card-task:preview-01').evaluate(element => getComputedStyle(element).backgroundColor);
+  const boardAccent = await page.getByRole('button', { name: '新建任务', exact: true }).evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.keyboard.press('Control+Shift+I');
+  const dialog = page.getByRole('dialog', { name: '快速添加到 Inbox' });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(boardSurface);
+  expect(await dialog.getByRole('button', { name: '添加到 Inbox' }).evaluate(element => getComputedStyle(element).backgroundColor)).toBe(boardAccent);
+  await dialog.getByLabel('任务名称').fill('全局收集的新想法');
+  await dialog.getByRole('button', { name: '添加到 Inbox' }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  const entry = page.getByTestId('inbox-panel').locator('[data-testid^="inbox-entry-"]').filter({ hasText: '全局收集的新想法' });
+  await expect(entry).toBeVisible();
+  await entry.getByRole('button', { name: '创建任务', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '从 Inbox 创建任务', exact: true })).toBeVisible();
+  await expect(page.getByLabel('任务标题', { exact: true })).toHaveValue('全局收集的新想法');
+  await page.getByRole('button', { name: '创建待办任务', exact: true }).click();
+
+  await expect(page.getByRole('button', { name: '查看任务 全局收集的新想法', exact: true })).toBeVisible();
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  await expect(page.getByTestId('inbox-panel')).not.toContainText('全局收集的新想法');
+});
+
+test('global Inbox follows the Paseo light theme', async ({ page }) => {
+  await page.goto('/?light');
+  const boardSurface = await page.getByTestId('card-task:preview-01').evaluate(element => getComputedStyle(element).backgroundColor);
+  const boardAccent = await page.getByRole('button', { name: '新建任务', exact: true }).evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.keyboard.press('Control+Shift+I');
+  const dialog = page.getByRole('dialog', { name: '快速添加到 Inbox' });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(boardSurface);
+  expect(await dialog.getByRole('button', { name: '添加到 Inbox' }).evaluate(element => getComputedStyle(element).backgroundColor)).toBe(boardAccent);
+});
+
+test('global Inbox resolves the host theme before the board ever mounts', async ({ page }) => {
+  await page.goto('/?no-board');
+  await expect(page.getByTestId('board-sidebar')).toHaveCount(0);
+  const hostSurface = await page.getByTestId('host-card').evaluate(element => getComputedStyle(element).backgroundColor);
+  const hostAccent = await page.getByTestId('host-primary').evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.keyboard.press('Control+Shift+I');
+  const dialog = page.getByRole('dialog', { name: '快速添加到 Inbox' });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(hostSurface);
+  expect(await dialog.getByRole('button', { name: '添加到 Inbox' }).evaluate(element => getComputedStyle(element).backgroundColor)).toBe(hostAccent);
+});
+
+test('global Inbox owns Escape and focus above a task dialog', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  const taskTitle = page.getByLabel('任务标题', { exact: true });
+  await taskTitle.fill('底层未保存的任务');
+  await page.keyboard.press('Control+Shift+I');
+  const inbox = page.getByRole('dialog', { name: '快速添加到 Inbox' });
+  const inboxTitle = inbox.getByLabel('任务名称');
+  await expect(inboxTitle).toBeFocused();
+
+  await page.keyboard.press('Control+Enter');
+  await expect(inbox).toBeVisible();
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看任务 底层未保存的任务', exact: true })).toHaveCount(0);
+
+  await page.keyboard.press('Shift+Tab');
+  await expect(inbox.getByRole('button', { name: '添加到 Inbox' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(inboxTitle).toBeFocused();
+  await page.keyboard.press('Escape');
+
+  await expect(inbox).toHaveCount(0);
+  await expect(taskTitle).toBeFocused();
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('only the active board opens a new-task dialog when stacked routes remain mounted', async ({ page }) => {
+  await page.goto('/?stacked-board');
+  await page.keyboard.press('/');
+  await expect(page.locator('[aria-label="搜索任务"]:visible')).toBeFocused();
+  await page.locator('[aria-label="搜索任务"]:visible').blur();
+  await page.keyboard.press('n');
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(0);
+});
+
 test('search across projects and clear to restore all sessions', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('/');

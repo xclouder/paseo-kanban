@@ -1,6 +1,6 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
-import { completeReviewCards, createTask, deleteTask, launchTask, moveCard, organizeProjects, patchCard, readBoard } from './shared/contracts';
-import { completeReview, create, launch, move, organize, patch, read, remove } from './server/handlers';
+import { addInboxEntry, completeReviewCards, createTask, deleteInboxEntry, deleteTask, launchTask, moveCard, organizeProjects, patchCard, readBoard } from './shared/contracts';
+import { addInbox, completeReview, create, deleteInbox, launch, move, organize, patch, read, remove } from './server/handlers';
 
 export default function contribute(server: PluginServerContext) {
   server.handle(readBoard, read);
@@ -8,6 +8,8 @@ export default function contribute(server: PluginServerContext) {
   server.handle(patchCard, patch);
   server.handle(moveCard, move);
   server.handle(completeReviewCards, completeReview);
+  server.handle(addInboxEntry, addInbox);
+  server.handle(deleteInboxEntry, deleteInbox);
   server.handle(createTask, create);
   server.handle(launchTask, launch);
   server.handle(deleteTask, remove);
