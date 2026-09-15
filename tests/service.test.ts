@@ -436,15 +436,15 @@ test('batch completion marks every reviewed task done atomically', async t => {
   assert.equal(data.sessions['session-06'].stage, 'done');
   assert(data.sessions['session-05'].stageTurn);
 });
-test('batch archive hides every completed task atomically', async t => {
+test('batch hide removes every completed task from the board atomically', async t => {
   const { service, store } = await setup(t); const { api } = mockApi();
   await service.move({ id: 'agent:session-07', stage: 'done' }, api);
   await service.move({ id: 'agent:session-08', stage: 'done' }, api);
-  await assert.rejects(() => service.archiveDone({ ids: ['agent:session-07', 'agent:session-05'] }, api), /已不在已完成状态/);
+  await assert.rejects(() => service.hideDone({ ids: ['agent:session-07', 'agent:session-05'] }, api), /已不在已完成状态/);
   assert.equal((await store.read()).sessions['session-07'].hidden, false);
   assert.equal((await store.read()).sessions['session-05'], undefined);
 
-  const result = await service.archiveDone({ ids: ['agent:session-07', 'agent:session-08', 'agent:session-07'] }, api);
+  const result = await service.hideDone({ ids: ['agent:session-07', 'agent:session-08', 'agent:session-07'] }, api);
   assert.deepEqual(result, { ok: true, count: 2 });
   const data = await store.read();
   assert.equal(data.sessions['session-07'].hidden, true);

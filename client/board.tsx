@@ -5,7 +5,7 @@ import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/pl
 import { useRpc } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { archiveDoneCards, completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, patchInboxEntry, readBoard, type ArchiveDoneInput, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
+import { completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, hideDoneCards, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, patchInboxEntry, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type HideDoneInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
 import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type InboxEntry, type Snapshot, type Stage, type Task, type TaskAttachment, type Workspace } from '../shared/model';
 import { organizeProjects } from '../shared/contracts';
 import type { ProjectAction } from '../shared/projects';
@@ -19,7 +19,7 @@ export interface BoardApi {
   patch(input: PatchInput): Promise<unknown>;
   move(input: MoveInput): Promise<unknown>;
   completeReview(input: CompleteReviewInput): Promise<{ ok: boolean; count: number }>;
-  archiveDone(input: ArchiveDoneInput): Promise<{ ok: boolean; count: number }>;
+  hideDone(input: HideDoneInput): Promise<{ ok: boolean; count: number }>;
   create(input: CreateInput): Promise<Task>;
   createProject(input: CreateProjectWorkspaceInput): Promise<Workspace>;
   patchInbox(input: PatchInboxInput): Promise<InboxEntry>;
@@ -36,8 +36,8 @@ export function KanbanWorkspace(props: PluginWorkspacePanelProps) {
 }
 function ConnectedBoard(props: PluginSurfaceProps & { workspaceId?: string }) {
   const organize = useRpc(organizeProjects), createProject = useRpc(createProjectWorkspace);
-  const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), archiveDone = useRpc(archiveDoneCards), create = useRpc(createTask), patchInbox = useRpc(patchInboxEntry), removeInbox = useRpc(deleteInboxEntry), launch = useRpc(launchTask), remove = useRpc(deleteTask);
-  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, archiveDone, create, createProject, patchInbox, removeInbox, launch, remove, organize }), [read, patch, move, completeReview, archiveDone, create, createProject, patchInbox, removeInbox, launch, remove, organize]);
+  const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), hideDone = useRpc(hideDoneCards), create = useRpc(createTask), patchInbox = useRpc(patchInboxEntry), removeInbox = useRpc(deleteInboxEntry), launch = useRpc(launchTask), remove = useRpc(deleteTask);
+  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, hideDone, create, createProject, patchInbox, removeInbox, launch, remove, organize }), [read, patch, move, completeReview, hideDone, create, createProject, patchInbox, removeInbox, launch, remove, organize]);
   return <BoardView {...props} api={api} />;
 }
 
@@ -394,7 +394,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const count = (id?: string) => scope.filter(card => !card.hidden && (!id || card.projectId === id)).length;
   const move = (id: string, stage: Stage, beforeId?: string) => { setDragging(null); return run(() => api.move({ id, stage, beforeId }), `已移至${stageNames[stage]}`); };
   const completeReview = (ids: string[]) => { void run(() => api.completeReview({ ids }), `已将 ${ids.length} 个待审核任务标记为完成`); };
-  const archiveDone = (ids: string[]) => { void run(() => api.archiveDone({ ids }), `已归档 ${ids.length} 个已完成任务`); };
+  const hideDone = (ids: string[]) => { void run(() => api.hideDone({ ids }), `已从看板收起 ${ids.length} 个已完成任务`); };
   const reset = () => { setInboxView(false); setQuery(''); setProject(''); setProvider(''); setPinned(false); setAttention(false); setHidden(false); };
 
   const sidebarItem = (text: string, icon: string, selectedItem: boolean, onPress: () => void, amount?: number) => <Pressable key={text} accessibilityRole="button" onPress={onPress} style={{ ...row, gap: 9, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 7, backgroundColor: selectedItem ? c.surface2 : 'transparent' }}>
@@ -485,7 +485,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
               {stages.map(stage => {
                 const cards = visible.filter(card => card.stage === stage);
                 return <View key={stage} testID={`column-${stage}`} style={{ width: layout.compact ? 280 : 268, flexGrow: 1, minHeight: 200 }}>
-                  <View style={{ ...row, gap: 8, marginBottom: 17, paddingHorizontal: 3 }}><Icon name={stageIcons[stage]} size={16} color={stageColor(stage, c)} /><Text style={{ color: c.foreground, fontSize: 12, fontWeight: '600' }}>{stageNames[stage]}</Text><Text style={{ color: c.foregroundMuted, fontSize: 11, marginLeft: 4 }}>{cards.length}</Text><View style={{ flex: 1 }} />{stage === 'review' && cards.length > 0 && <Button c={c} small icon="CheckCheck" label={`完成当前筛选的 ${cards.length} 个待审核任务`} disabled={busy} onPress={() => completeReview(cards.map(card => card.id))}>完成当前 {cards.length} 项</Button>}{stage === 'done' && !hidden && cards.length > 0 && <Button c={c} small icon="Archive" label={`归档当前筛选的 ${cards.length} 个已完成任务`} disabled={busy} onPress={() => archiveDone(cards.map(card => card.id))}>归档当前 {cards.length} 项</Button>}{stage === 'todo' && <Pressable accessibilityRole="button" accessibilityLabel="添加待办" disabled={busy} onPress={() => openCreate()}><Icon name="Plus" size={16} color={c.foregroundMuted} /></Pressable>}</View>
+                  <View style={{ ...row, gap: 8, marginBottom: 17, paddingHorizontal: 3 }}><Icon name={stageIcons[stage]} size={16} color={stageColor(stage, c)} /><Text style={{ color: c.foreground, fontSize: 12, fontWeight: '600' }}>{stageNames[stage]}</Text><Text style={{ color: c.foregroundMuted, fontSize: 11, marginLeft: 4 }}>{cards.length}</Text><View style={{ flex: 1 }} />{stage === 'review' && cards.length > 0 && <Button c={c} small icon="CheckCheck" label={`完成当前筛选的 ${cards.length} 个待审核任务`} disabled={busy} onPress={() => completeReview(cards.map(card => card.id))}>完成当前 {cards.length} 项</Button>}{stage === 'done' && !hidden && cards.length > 0 && <Button c={c} small icon="Archive" label={`从看板收起当前筛选的 ${cards.length} 个已完成任务`} disabled={busy} onPress={() => hideDone(cards.map(card => card.id))}>收起当前 {cards.length} 项</Button>}{stage === 'todo' && <Pressable accessibilityRole="button" accessibilityLabel="添加待办" disabled={busy} onPress={() => openCreate()}><Icon name="Plus" size={16} color={c.foregroundMuted} /></Pressable>}</View>
                   <DropZone enabled={layout.platform === 'web' && !busy} onDrop={id => move(id, stage)}>
                     <ScrollView style={{ flex: 1, borderRadius: 9, backgroundColor: c.surface0, borderWidth: dragging ? 1 : 0, borderColor: c.border }} contentContainerStyle={{ gap: 10, paddingBottom: 32, minHeight: 150 }}>
                       {cards.map(card => <DropZone key={card.id} item enabled={layout.platform === 'web' && !busy} onDrop={id => { if (id !== card.id) move(id, stage, card.id); }}>

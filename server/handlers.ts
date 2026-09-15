@@ -4,7 +4,7 @@ import type { PluginHandlerContext } from '@getpaseo/plugin/server';
 import { BoardService } from './service';
 import { Store } from './store';
 import type { ProjectAction } from '../shared/projects';
-import type { AddInboxInput, ArchiveDoneInput, CompleteReviewInput, CreateInput, CreateProjectWorkspaceInput, MoveInput, PatchInboxInput, PatchInput } from '../shared/contracts';
+import type { AddInboxInput, CompleteReviewInput, CreateInput, CreateProjectWorkspaceInput, HideDoneInput, MoveInput, PatchInboxInput, PatchInput } from '../shared/contracts';
 import type { KanbanSettings } from '../shared/settings';
 
 const service = new BoardService(new Store(join(process.env.PASEO_HOME || join(homedir(), '.paseo'), 'paseo-kanban', 'board.json')));
@@ -15,7 +15,7 @@ export const organize = (input: ProjectAction, { paseo }: PluginHandlerContext) 
 export const patch = (input: PatchInput, { paseo }: PluginHandlerContext) => service.patch(input, paseo);
 export const move = (input: MoveInput, { paseo }: PluginHandlerContext) => service.move(input, paseo);
 export const completeReview = (input: CompleteReviewInput, { paseo }: PluginHandlerContext) => service.completeReview(input, paseo);
-export const archiveDone = (input: ArchiveDoneInput, { paseo }: PluginHandlerContext) => service.archiveDone(input, paseo);
+export const hideDone = (input: HideDoneInput, { paseo }: PluginHandlerContext) => service.hideDone(input, paseo);
 export const addInbox = (input: AddInboxInput) => service.addInbox(input);
 export const patchInbox = (input: PatchInboxInput) => service.patchInbox(input);
 export const deleteInbox = ({ id }: { id: string }) => service.deleteInbox(id);

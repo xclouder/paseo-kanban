@@ -611,13 +611,13 @@ test('complete all visible reviewed tasks in one action', async ({ page }) => {
   await expect(page.getByTestId('column-done').getByTestId('card-agent:session-06')).toHaveCount(0);
 });
 
-test('archive all visible completed tasks in one action', async ({ page }) => {
+test('hide all visible completed tasks from the board in one action', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('搜索任务', { exact: true }).fill('更新组件库');
   const done = page.getByTestId('column-done');
   await expect(done.getByRole('button', { name: /^查看任务 / })).toHaveCount(1);
-  await done.getByRole('button', { name: '归档当前筛选的 1 个已完成任务', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('已归档 1 个已完成任务');
+  await done.getByRole('button', { name: '从看板收起当前筛选的 1 个已完成任务', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('已从看板收起 1 个已完成任务');
   await expect(done.getByRole('button', { name: /^查看任务 / })).toHaveCount(0);
   await page.getByRole('button', { name: '清除搜索', exact: true }).click();
   await expect(done.getByTestId('card-agent:session-08')).toBeVisible();

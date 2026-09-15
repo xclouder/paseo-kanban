@@ -66,7 +66,7 @@ const api: BoardApi = {
     persist();
     return { ok: true, count: targets.length };
   },
-  archiveDone: async ({ ids }) => {
+  hideDone: async ({ ids }) => {
     const cards = buildCards(data);
     const targets = [...new Set(ids)].map(id => cards.find(card => card.id === id));
     if (targets.some(card => !card || card.hidden || card.stage !== 'done')) throw new Error('部分任务已不在已完成状态，请刷新看板后重试。');

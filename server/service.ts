@@ -1,5 +1,5 @@
 import type { PaseoApi, PaseoAgent, PaseoWorkspace } from '@getpaseo/client';
-import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type ArchiveDoneInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
+import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type HideDoneInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
 import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, inboxEntrySchema, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment, type Workspace } from '../shared/model';
 import { Store } from './store';
 import { applyProjectAction, type ProjectAction } from '../shared/projects';
@@ -349,7 +349,7 @@ export class BoardService {
       return { ok: true, count: cards.length };
     });
   }
-  async archiveDone(input: ArchiveDoneInput, paseo: PaseoApi) {
+  async hideDone(input: HideDoneInput, paseo: PaseoApi) {
     const ids = [...new Set(input.ids)];
     return this.store.update(async data => {
       const cards: Array<{ meta: Metadata; agent?: Agent }> = [];
