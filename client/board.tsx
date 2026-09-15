@@ -5,7 +5,7 @@ import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/pl
 import { useRpc } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { completeReviewCards, createTask, deleteInboxEntry, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
+import { completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInput } from '../shared/contracts';
 import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type InboxEntry, type Snapshot, type Stage, type Task, type TaskAttachment, type Workspace } from '../shared/model';
 import { organizeProjects } from '../shared/contracts';
 import type { ProjectAction } from '../shared/projects';
@@ -20,6 +20,7 @@ export interface BoardApi {
   move(input: MoveInput): Promise<unknown>;
   completeReview(input: CompleteReviewInput): Promise<{ ok: boolean; count: number }>;
   create(input: CreateInput): Promise<Task>;
+  createProject(input: CreateProjectWorkspaceInput): Promise<Workspace>;
   removeInbox(input: { id: string }): Promise<unknown>;
   launch(input: { id: string }): Promise<{ agentId: string }>;
   remove(input: { id: string }): Promise<unknown>;
@@ -32,13 +33,14 @@ export function KanbanWorkspace(props: PluginWorkspacePanelProps) {
   return <ConnectedBoard key={`${props.host.id}:${props.workspaceId}`} {...props} workspaceId={props.workspaceId} />;
 }
 function ConnectedBoard(props: PluginSurfaceProps & { workspaceId?: string }) {
-  const organize = useRpc(organizeProjects);
+  const organize = useRpc(organizeProjects), createProject = useRpc(createProjectWorkspace);
   const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), create = useRpc(createTask), removeInbox = useRpc(deleteInboxEntry), launch = useRpc(launchTask), remove = useRpc(deleteTask);
-  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, create, removeInbox, launch, remove, organize }), [read, patch, move, completeReview, create, removeInbox, launch, remove, organize]);
+  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, create, createProject, removeInbox, launch, remove, organize }), [read, patch, move, completeReview, create, createProject, removeInbox, launch, remove, organize]);
   return <BoardView {...props} api={api} />;
 }
 
 type Colors = PluginTheme['colors'];
+type Notice = { text: string; error: boolean; retry?: boolean };
 const SIDEBAR_MIN_WIDTH = 176;
 const SIDEBAR_MAX_WIDTH = 420;
 const SIDEBAR_DEFAULT_WIDTH = 210;
@@ -236,12 +238,14 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [defaultModel, setDefaultModel] = useState('');
   const [dragging, setDragging] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [message, setMessage] = useState<Notice | null>(null);
   const search = useRef<TextInput>(null);
   const mutation = useMutation({ mutationFn: (run: () => Promise<unknown>) => run(), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey }); }, onError: error => setMessage({ text: errorText(error), error: true }) });
   const mutationPendingRef = useRef(mutation.isPending);
   mutationPendingRef.current = mutation.isPending;
   const busy = mutation.isPending || !board.data || board.isError;
+  const notice: Notice | null = board.isError ? { text: `同步失败，操作已暂停。${errorText(board.error)}`, error: true, retry: true } : message;
+  const projectBaseDirectory = board.data?.store.settings.projectBaseDirectory ?? '';
   const run = async (action: () => Promise<unknown>, success?: string) => {
     if (busy) return false;
     try { await mutation.mutateAsync(action); if (success) setMessage({ text: success, error: false }); return true; } catch { return false; }
@@ -392,10 +396,10 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     {amount !== undefined && <Text style={{ color: c.foregroundMuted, fontSize: 11 }}>{amount}</Text>}
   </Pressable>;
 
-  const detail = active && <Detail key={active.id} card={active} snapshot={board.data!} c={c} busy={busy} web={layout.platform === 'web'} pasteEnabled={!creating} navigation={navigation} close={() => setSelected(null)}
+  const detail = active && <Detail key={active.id} card={active} snapshot={board.data!} c={c} busy={busy} web={layout.platform === 'web'} pasteEnabled={!creating} navigation={navigation} notice={notice} dismissNotice={() => board.isError ? void board.refetch() : setMessage(null)} close={() => setSelected(null)}
     move={stage => move(active.id, stage)}
     save={patch => run(() => api.patch({ id: active.id, patch }), '已保存')}
-    launch={() => run(async () => { const result = await api.launch({ id: active.id }); navigation?.openAgent({ agentId: result.agentId }); }, '任务已交给 Agent')}
+    launch={() => run(() => api.launch({ id: active.id }), '任务已交给 Agent')}
     remove={() => run(() => api.remove({ id: active.id }), '任务已删除')}
   />;
 
@@ -457,12 +461,12 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
             {layout.compact && projects.map(p => <Button key={p.id} c={c} small active={project === p.id} onPress={() => setProject(project === p.id ? '' : p.id)}>{p.name}</Button>)}
           </ScrollView>}
         </View>
-        {(board.isError || message) && <View accessibilityRole="alert" style={{ ...row, gap: 9, padding: 12, backgroundColor: c.surface2 }}>
-          <Icon name={board.isError || message?.error ? 'CircleAlert' : 'Check'} size={16} color={board.isError || message?.error ? c.statusDanger : c.statusSuccess} />
-          <Text style={{ flex: 1, color: board.isError || message?.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{board.isError ? `同步失败，操作已暂停。${errorText(board.error)}` : message?.text}</Text>
-          <Button c={c} small onPress={() => board.isError ? void board.refetch() : setMessage(null)}>{board.isError ? '重试' : '关闭'}</Button>
+        {!active && notice && <View accessibilityRole="alert" style={{ ...row, gap: 9, padding: 12, backgroundColor: c.surface2 }}>
+          <Icon name={notice.error ? 'CircleAlert' : 'Check'} size={16} color={notice.error ? c.statusDanger : c.statusSuccess} />
+          <Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text>
+          <Button c={c} small onPress={() => notice.retry ? void board.refetch() : setMessage(null)}>{notice.retry ? '重试' : '关闭'}</Button>
         </View>}
-        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} busy={busy} createTask={entry => openCreate(entry)} remove={id => run(() => api.removeInbox({ id }), 'Inbox 条目已删除')} /> : <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
+        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} busy={busy} createTask={entry => openCreate(entry)} remove={id => run(() => api.removeInbox({ id }), 'Inbox 条目已删除')} /> : <View style={{ flex: 1, minHeight: 0 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {visible.length === 0 && <View style={{ padding: 16, ...row, gap: 12 }}><Icon name="Search" size={17} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 12, flex: 1 }}>{all.length ? '没有符合条件的任务。试试清除筛选，或查看已收起任务。' : '还没有会话。新建一个任务，或在 Paseo 中打开会话后刷新。'}</Text>{all.length > 0 && <Button c={c} small onPress={reset}>清除筛选</Button>}</View>}
             <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: layout.compact ? 12 : 24, gap: 15, flexGrow: 1 }} showsHorizontalScrollIndicator>
@@ -485,15 +489,20 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
             </ScrollView>
             {!layout.compact && <View style={{ ...row, paddingHorizontal: 26, paddingVertical: 12, borderTopWidth: 1, borderTopColor: c.border, gap: 8 }}><Icon name="GripVertical" size={13} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 10 }}>拖动卡片调整进度 · 点击查看详情 · / 搜索 · N 新建</Text><View style={{ flex: 1 }} /><Text style={{ color: c.foregroundMuted, fontSize: 10 }}>完成由你确认</Text></View>}
           </View>
-          {!layout.compact && detail && <View style={{ width: 350, borderLeftWidth: 1, borderLeftColor: c.border, backgroundColor: c.surface1 }}>{detail}</View>}
         </View>}
       </View>
     </View>
-    {layout.compact && <Modal visible={Boolean(active)} animationType="slide" onRequestClose={() => setSelected(null)}><View style={{ flex: 1, backgroundColor: c.surface1, paddingTop: 28 }}>{detail}</View></Modal>}
+    <Modal visible={Boolean(active)} transparent animationType="fade" {...(layout.platform === 'web' ? { accessibilityViewIsModal: true, accessibilityLabel: active ? `任务详情：${active.title}` : '任务详情' } : {})} onRequestClose={() => setSelected(null)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.58)', alignItems: 'center', justifyContent: 'center', padding: layout.compact ? 12 : 28 }}>
+        <View testID="task-detail-dialog" {...(layout.platform === 'web' ? {} : { role: 'dialog' as const, accessibilityViewIsModal: true, accessibilityLabel: active ? `任务详情：${active.title}` : '任务详情' })} style={{ width: '100%', maxWidth: 680, maxHeight: layout.compact ? '96%' : '90%', backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 14, overflow: 'hidden' }}>
+          {detail}
+        </View>
+      </View>
+    </Modal>
     <Modal visible={creating} transparent animationType="fade" onRequestClose={requestCreateClose}>
       <View style={{ flex: 1, backgroundColor: c.surface0, alignItems: 'center', justifyContent: 'center', padding: layout.compact ? 12 : 28 }}>
         <View style={{ width: '100%', maxWidth: 560, maxHeight: '95%', backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 14, overflow: 'hidden' }}>
-          {creating && <CreateForm c={c} snapshot={board.data} workspaceId={workspaceId} projectId={project} web={layout.platform === 'web'} shortcutEnabled={!confirmingCreateClose} busy={busy} defaultModel={defaultModel} initialTitle={createSource?.title} inboxId={createSource?.id} setDefaultModel={saveDefaultModel} onDirtyChange={changeCreateDirty} onCloseBlockedChange={changeCreateCloseBlocked} close={requestCreateClose} create={async input => { let task: Task | undefined; const ok = await run(async () => { task = await api.create(input); }); if (ok && task) { reset(); changeCreateDirty(false); changeCreateCloseBlocked(false); setCreateSource(null); setSelected(task.id); creatingRef.current = false; setCreating(false); } return ok; }} />}
+          {creating && <CreateForm c={c} snapshot={board.data} workspaceId={workspaceId} projectId={project} web={layout.platform === 'web'} shortcutEnabled={!confirmingCreateClose} busy={busy} defaultModel={defaultModel} projectBaseDirectory={projectBaseDirectory} initialTitle={createSource?.title} inboxId={createSource?.id} setDefaultModel={saveDefaultModel} onDirtyChange={changeCreateDirty} onCloseBlockedChange={changeCreateCloseBlocked} close={requestCreateClose} createProject={async input => await mutation.mutateAsync(() => api.createProject(input)) as Workspace} create={async input => { let task: Task | undefined; const ok = await run(async () => { task = await api.create(input); }); if (ok && task) { reset(); changeCreateDirty(false); changeCreateCloseBlocked(false); setCreateSource(null); setSelected(task.id); creatingRef.current = false; setCreating(false); } return ok; }} />}
         </View>
       </View>
     </Modal>
@@ -544,13 +553,28 @@ function Input({ c, label, value, onChangeText, multiline, placeholder }: { c: C
 const parseTags = (text: string) => [...new Set(text.split(/[,，]/).map(t => t.trim()).filter(Boolean))];
 const formatBytes = (size: number) => size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
 
-function WorkspacePicker({ c, workspaces, value, disabled, onChange }: { c: Colors; workspaces: Workspace[]; value: string; disabled?: boolean; onChange(id: string): void }) {
+function WorkspacePicker({ c, workspaces, value, disabled, projectBaseDirectory = '', onCreateProject, onChange }: { c: Colors; workspaces: Workspace[]; value: string; disabled?: boolean; projectBaseDirectory?: string; onCreateProject?(name: string): Promise<Workspace>; onChange(id: string): void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [view, setView] = useState<'existing' | 'new'>('existing');
+  const [projectName, setProjectName] = useState('');
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [createError, setCreateError] = useState('');
   const selected = workspaces.find(workspace => workspace.id === value);
+  const pickerDisabled = Boolean(disabled || (!workspaces.length && !onCreateProject));
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const filtered = workspaces.filter(workspace => words.every(word => [workspace.project, workspace.name, workspace.directory, workspace.id].join(' ').toLocaleLowerCase().includes(word)));
-  const close = () => { setOpen(false); setQuery(''); };
+  const close = () => { if (creatingProject) return; setOpen(false); setQuery(''); setView('existing'); setProjectName(''); setCreateError(''); };
+  const submitProject = async () => {
+    if (!onCreateProject || creatingProject || !projectBaseDirectory.trim() || !projectName.trim()) return;
+    setCreatingProject(true); setCreateError('');
+    try {
+      const workspace = await onCreateProject(projectName.trim());
+      onChange(workspace.id);
+      setOpen(false); setQuery(''); setView('existing'); setProjectName('');
+    } catch (error) { setCreateError(errorText(error)); }
+    finally { setCreatingProject(false); }
+  };
   useEffect(() => {
     if (!open || typeof document === 'undefined') return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -559,24 +583,33 @@ function WorkspacePicker({ c, workspaces, value, disabled, onChange }: { c: Colo
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [open]);
+  }, [open, creatingProject]);
   return <>
-    <Pressable accessibilityRole="button" accessibilityLabel={`选择工作区，当前 ${selected ? `${selected.project} / ${selected.name}` : '未选择'}`} accessibilityState={{ disabled: Boolean(disabled) }} disabled={disabled || !workspaces.length} onPress={() => setOpen(true)} style={({ pressed }) => ({ ...row, gap: 10, minHeight: 50, paddingHorizontal: 12, paddingVertical: 9, marginBottom: 18, borderRadius: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface0, opacity: disabled ? 0.65 : pressed ? 0.75 : 1 })}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`选择工作区，当前 ${selected ? `${selected.project} / ${selected.name}` : '未选择'}`} accessibilityState={{ disabled: pickerDisabled }} disabled={pickerDisabled} onPress={() => setOpen(true)} style={({ pressed }) => ({ ...row, gap: 10, minHeight: 50, paddingHorizontal: 12, paddingVertical: 9, marginBottom: 18, borderRadius: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface0, opacity: pickerDisabled ? 0.65 : pressed ? 0.75 : 1 })}>
       <Icon name="FolderOpen" size={16} color={c.foregroundMuted} />
       <View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: selected ? c.foreground : c.statusWarning, fontSize: 12, fontWeight: '600' }}>{selected ? `${selected.project} / ${selected.name}` : '请选择工作区'}</Text>{selected && <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{selected.directory}</Text>}</View>
-      {!disabled && workspaces.length > 0 && <Icon name="ChevronRight" size={15} color={c.foregroundMuted} />}
+      {!disabled && (workspaces.length > 0 || onCreateProject) && <Icon name="ChevronRight" size={15} color={c.foregroundMuted} />}
     </Pressable>
     <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
       <View testID="workspace-subpanel" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'center', padding: 18 }}>
         <View accessibilityLabel="选择工作区" style={{ width: '100%', maxWidth: 520, maxHeight: '82%', backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 12, overflow: 'hidden' }}>
-          <View style={{ ...row, gap: 9, padding: 18, borderBottomWidth: 1, borderBottomColor: c.border }}><Icon name="FolderOpen" size={17} color={c.accent} /><Text accessibilityRole="header" style={{ flex: 1, color: c.foreground, fontSize: 16, fontWeight: '600' }}>选择工作区</Text><Button c={c} small icon="X" label="关闭工作区选择" onPress={close} /></View>
-          <View style={{ ...row, gap: 8, margin: 14, marginBottom: 7, paddingHorizontal: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface0, borderRadius: 7 }}><Icon name="Search" size={14} color={c.foregroundMuted} /><TextInput accessibilityLabel="搜索工作区" autoFocus value={query} onChangeText={setQuery} placeholder="按项目、工作区或路径搜索…" placeholderTextColor={c.foregroundMuted} style={{ flex: 1, color: c.foreground, fontSize: 12, height: 40 }} />{query ? <Pressable accessibilityRole="button" accessibilityLabel="清除工作区搜索" onPress={() => setQuery('')}><Icon name="X" size={14} color={c.foregroundMuted} /></Pressable> : null}</View>
-          <ScrollView contentContainerStyle={{ padding: 14, paddingTop: 7, gap: 7 }}>
-            {filtered.map(workspace => <Pressable key={workspace.id} accessibilityRole="button" accessibilityLabel={`选择工作区 ${workspace.project} / ${workspace.name}`} accessibilityState={{ selected: workspace.id === value }} onPress={() => { onChange(workspace.id); close(); }} style={({ pressed }) => ({ ...row, gap: 10, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: workspace.id === value ? c.accent : c.border, backgroundColor: workspace.id === value ? c.surface2 : c.surface0, opacity: pressed ? 0.75 : 1 })}>
-              <Icon name={workspace.id === value ? 'CircleCheck' : 'FolderGit2'} size={15} color={workspace.id === value ? c.accent : c.foregroundMuted} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.foreground, fontSize: 12, fontWeight: '600' }}>{workspace.project} / {workspace.name}</Text><Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{workspace.directory}</Text></View>
-            </Pressable>)}
-            {filtered.length === 0 && <Text style={{ color: c.foregroundMuted, fontSize: 12, padding: 16, textAlign: 'center' }}>没有匹配的工作区</Text>}
-          </ScrollView>
+          <View style={{ ...row, gap: 9, padding: 18, borderBottomWidth: 1, borderBottomColor: c.border }}><Icon name="FolderOpen" size={17} color={c.accent} /><Text accessibilityRole="header" style={{ flex: 1, color: c.foreground, fontSize: 16, fontWeight: '600' }}>{view === 'new' ? '新建项目与工作区' : '选择工作区'}</Text><Button c={c} small icon="X" label="关闭工作区选择" disabled={creatingProject} onPress={close} /></View>
+          {onCreateProject && <View style={{ ...row, gap: 8, paddingHorizontal: 14, paddingTop: 14 }}><Button c={c} small active={view === 'existing'} onPress={() => { setView('existing'); setCreateError(''); }}>已有工作区</Button><Button c={c} small active={view === 'new'} onPress={() => { setView('new'); setCreateError(''); }}>新建项目</Button></View>}
+          {view === 'existing' ? <>
+            <View style={{ ...row, gap: 8, margin: 14, marginBottom: 7, paddingHorizontal: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface0, borderRadius: 7 }}><Icon name="Search" size={14} color={c.foregroundMuted} /><TextInput accessibilityLabel="搜索工作区" autoFocus value={query} onChangeText={setQuery} placeholder="按项目、工作区或路径搜索…" placeholderTextColor={c.foregroundMuted} style={{ flex: 1, color: c.foreground, fontSize: 12, height: 40 }} />{query ? <Pressable accessibilityRole="button" accessibilityLabel="清除工作区搜索" onPress={() => setQuery('')}><Icon name="X" size={14} color={c.foregroundMuted} /></Pressable> : null}</View>
+            <ScrollView contentContainerStyle={{ padding: 14, paddingTop: 7, gap: 7 }}>
+              {filtered.map(workspace => <Pressable key={workspace.id} accessibilityRole="button" accessibilityLabel={`选择工作区 ${workspace.project} / ${workspace.name}`} accessibilityState={{ selected: workspace.id === value }} onPress={() => { onChange(workspace.id); close(); }} style={({ pressed }) => ({ ...row, gap: 10, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: workspace.id === value ? c.accent : c.border, backgroundColor: workspace.id === value ? c.surface2 : c.surface0, opacity: pressed ? 0.75 : 1 })}>
+                <Icon name={workspace.id === value ? 'CircleCheck' : 'FolderGit2'} size={15} color={workspace.id === value ? c.accent : c.foregroundMuted} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.foreground, fontSize: 12, fontWeight: '600' }}>{workspace.project} / {workspace.name}</Text><Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{workspace.directory}</Text></View>
+              </Pressable>)}
+              {filtered.length === 0 && <Text style={{ color: c.foregroundMuted, fontSize: 12, padding: 16, textAlign: 'center' }}>没有匹配的工作区</Text>}
+            </ScrollView>
+          </> : <View style={{ padding: 18 }}>
+            <Label c={c}>项目名</Label>
+            <TextInput accessibilityLabel="新项目名称" autoFocus value={projectName} editable={!creatingProject} onChangeText={value => { setProjectName(value); setCreateError(''); }} onSubmitEditing={() => void submitProject()} placeholder="例如：new-product" placeholderTextColor={c.foregroundMuted} style={{ color: c.foreground, borderColor: c.border, backgroundColor: c.surface0, borderWidth: 1, borderRadius: 7, fontSize: 12, padding: 11, minHeight: 40, marginBottom: 12 }} />
+            {projectBaseDirectory.trim() ? <Text selectable style={{ color: c.foregroundMuted, fontSize: 11, lineHeight: 18, marginBottom: 14 }}>将在 {projectBaseDirectory.trim()} 下创建同名项目目录，并自动创建工作区。</Text> : <Text style={{ color: c.statusWarning, fontSize: 11, lineHeight: 18, marginBottom: 14 }}>请先在 Paseo 设置 → 插件 → 任务看板中配置项目基础目录。</Text>}
+            {createError ? <Text accessibilityRole="alert" style={{ color: c.statusDanger, fontSize: 11, marginBottom: 12 }}>{createError}</Text> : null}
+            <Button c={c} primary icon="Plus" disabled={creatingProject || !projectBaseDirectory.trim() || !projectName.trim()} onPress={() => void submitProject()}>{creatingProject ? '正在创建…' : '创建项目和工作区'}</Button>
+          </View>}
         </View>
       </View>
     </Modal>
@@ -647,7 +680,7 @@ function StoredAttachments({ c, attachments }: { c: Colors; attachments: TaskAtt
   return <View testID="task-attachments" style={{ gap: 7, marginBottom: 10 }}>{attachments.map(attachment => <View key={attachment.id} style={{ ...row, gap: 9, padding: 10, borderWidth: 1, borderColor: c.border, borderRadius: 7, backgroundColor: c.surface0 }}><Icon name={attachment.mimeType.startsWith('image/') ? 'Image' : 'File'} size={15} color={c.foregroundMuted} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.foreground, fontSize: 11, fontWeight: '600' }}>{attachment.fileName}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 3 }}>{attachment.mimeType.startsWith('image/') ? '图片' : '文件'} · {formatBytes(attachment.size)}</Text></View><Text style={{ color: c.statusSuccess, fontSize: 10 }}>已上传</Text></View>)}</View>;
 }
 
-function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, close, move, save, launch, remove }: { card: Card; snapshot: Snapshot; c: Colors; busy: boolean; web: boolean; pasteEnabled: boolean; navigation: PluginSurfaceProps['navigation']; close(): void; move(stage: Stage): void; save(patch: PatchInput['patch']): Promise<boolean>; launch(): Promise<boolean>; remove(): Promise<boolean> }) {
+function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, notice, dismissNotice, close, move, save, launch, remove }: { card: Card; snapshot: Snapshot; c: Colors; busy: boolean; web: boolean; pasteEnabled: boolean; navigation: PluginSurfaceProps['navigation']; notice: Notice | null; dismissNotice(): void; close(): void; move(stage: Stage): void; save(patch: PatchInput['patch']): Promise<boolean>; launch(): Promise<boolean>; remove(): Promise<boolean> }) {
   const [title, setTitle] = useState(card.title), [description, setDescription] = useState(card.description), [tags, setTags] = useState(card.tags.join(', '));
   const [priority, setPriority] = useState(card.priority);
   const [workspace, setWorkspace] = useState(card.workspaceId ?? '');
@@ -655,6 +688,7 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, close,
   const [readingAttachments, setReadingAttachments] = useState(false);
   const [formError, setFormError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [launching, setLaunching] = useState(false);
   const canEditDraft = Boolean(card.task && !card.task.agentId && !card.task.launchState);
   const draftChanged = canEditDraft && (workspace !== card.workspaceId || attachmentAdditions.length > 0);
   const dirty = title !== card.title || description !== card.description || tags !== card.tags.join(', ') || priority !== card.priority || draftChanged;
@@ -666,9 +700,27 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, close,
   const taskModel = snapshot.models.find(model => model.id === card.task?.provider);
   const taskWasStarted = Boolean(card.task?.agentId || card.task?.launchState);
   const taskThinkingOptionId = card.task?.thinkingOptionId ?? (taskWasStarted ? undefined : defaultThinkingOptionId(taskModel?.thinkingOptions ?? [], taskModel?.defaultThinkingOptionId));
+  const canLaunch = Boolean(card.task && !card.task.agentId);
+  let launchHelp = '在此工作区新建会话，将任务说明发送给 Agent。';
+  if (dirty) launchHelp = '请先保存修改，再启动任务。';
+  else if (!workspaceAvailable) launchHelp = '工作区不可用，请先在 Paseo 恢复工作区。';
+  else if (card.task?.launchState) launchHelp = '启动结果待确认，将检查是否已存在关联会话。';
+  let launchLabel = card.task?.launchState ? '检查并关联会话' : '开始执行';
+  if (launching) launchLabel = '正在启动…';
+  const startLaunch = async () => {
+    if (launching) return;
+    setLaunching(true);
+    try { await launch(); }
+    finally { setLaunching(false); }
+  };
   return <>
-    <View style={{ ...row, padding: 18, borderBottomWidth: 1, borderBottomColor: c.border, gap: 8 }}><Icon name="PanelRight" size={16} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, flex: 1, fontSize: 11 }}>任务详情 {dirty ? '· 未保存' : ''}</Text><Button c={c} small icon="X" label="关闭详情" onPress={close} /></View>
-    <ScrollView contentContainerStyle={{ padding: 20 }}>
+    <View style={{ ...row, padding: 18, borderBottomWidth: 1, borderBottomColor: c.border, gap: 8 }}><Icon name="FileText" size={16} color={c.foregroundMuted} /><Text accessibilityRole="header" style={{ color: c.foreground, flex: 1, fontSize: 15, fontWeight: '600' }}>任务详情 {dirty ? <Text style={{ color: c.statusWarning, fontSize: 11, fontWeight: '400' }}>· 未保存</Text> : null}</Text><Button c={c} small icon="X" label="关闭详情" onPress={close} /></View>
+    {notice && <View accessibilityRole="alert" style={{ ...row, gap: 9, paddingHorizontal: 20, paddingVertical: 12, backgroundColor: c.surface2, borderBottomWidth: 1, borderBottomColor: c.border }}><Icon name={notice.error ? 'CircleAlert' : 'Check'} size={16} color={notice.error ? c.statusDanger : c.statusSuccess} /><Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text><Button c={c} small onPress={dismissNotice}>{notice.retry ? '重试' : '关闭'}</Button></View>}
+    {(canLaunch || (card.agent && navigation)) && <View testID="task-primary-action" style={{ paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: c.border, backgroundColor: c.surface2 }}>
+      {canLaunch ? <Button c={c} primary icon="Play" disabled={busy || dirty || !workspaceAvailable || launching} onPress={() => void startLaunch()}>{launchLabel}</Button> : <Button c={c} primary icon="ArrowUpRight" onPress={() => navigation!.openAgent({ agentId: card.agent!.id })}>打开 Paseo 会话</Button>}
+      {canLaunch && <Text style={{ color: c.foregroundMuted, fontSize: 10, lineHeight: 18, marginTop: 8, textAlign: 'center' }}>{launchHelp}</Text>}
+    </View>}
+    <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ padding: 20 }}>
       <View style={{ ...row, gap: 7, marginBottom: 22 }}><Icon name={stageIcons[card.stage]} size={16} color={stageColor(card.stage, c)} /><Text style={{ color: stageColor(card.stage, c), fontSize: 12 }}>{stageNames[card.stage]}</Text><View style={{ flex: 1 }} /><Text selectable style={{ color: c.foregroundMuted, fontSize: 10 }}>{card.id.slice(-8)}</Text></View>
       <Input c={c} label="任务标题" value={title} onChangeText={setTitle} />
       <Input c={c} label="任务说明" value={description} onChangeText={setDescription} multiline placeholder="记录目标、上下文和验收标准…" />
@@ -690,8 +742,6 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, close,
       {card.task && <><Label c={c}>运行模式</Label><Text testID="task-run-mode" style={{ color: c.foreground, fontSize: 12, marginBottom: 16 }}>{snapshot.modes.find(mode => mode.provider === card.provider && mode.id === taskModeId)?.label ?? taskModeId ?? 'Agent 默认'}</Text></>}
       {card.task && <><Label c={c}>Thinking Mode</Label><Text testID="task-thinking-mode" style={{ color: c.foreground, fontSize: 12, marginBottom: 16 }}>{taskModel?.thinkingOptions.find(option => option.id === taskThinkingOptionId)?.label ?? taskThinkingOptionId ?? (taskWasStarted ? '未记录（Agent 默认）' : 'Agent 默认')}</Text></>}
       {card.agent && <><Label c={c}>会话 ID</Label><Text selectable style={{ color: c.foregroundMuted, fontSize: 10, marginBottom: 18 }}>{card.agent.id}</Text></>}
-      {card.agent && navigation && <Button c={c} primary icon="ArrowUpRight" onPress={() => navigation.openAgent({ agentId: card.agent!.id })}>打开 Paseo 会话</Button>}
-      {card.task && !card.task.agentId && <><Button c={c} primary icon="Play" disabled={busy || dirty || !workspaceAvailable} onPress={() => void launch()}>{card.task.launchState ? '检查并关联会话' : '开始执行'}</Button><Text style={{ color: c.foregroundMuted, fontSize: 10, lineHeight: 18, marginTop: 9 }}>{dirty ? '请先保存修改，再启动任务。' : !workspaceAvailable ? '工作区不可用，请先在 Paseo 恢复工作区。' : card.task.launchState ? '启动结果待确认，将检查是否已存在关联会话。' : '在此工作区新建会话，将任务说明发送给 Agent。'}</Text></>}
       {card.task?.agentId && !card.agent && <Text style={{ color: c.statusWarning, fontSize: 11, lineHeight: 18 }}>关联会话已归档或不可用。任务记录仍然保留。</Text>}
       {savedWorkspaceAvailable && navigation && <View style={{ marginTop: 9 }}><Button c={c} icon="FolderOpen" disabled={dirty} onPress={() => navigation.openWorkspace({ workspaceId: card.workspaceId! })}>打开工作区</Button></View>}
       {card.task && !card.task.agentId && !card.task.launchState && <View style={{ marginTop: 24 }}><Button c={c} icon="Trash2" disabled={busy} onPress={() => { if (!confirmDelete) { setConfirmDelete(true); return; } void remove().then(ok => { if (ok) close(); }); }}>{confirmDelete ? '确认永久删除' : '删除未启动任务'}</Button><Text style={{ color: confirmDelete ? c.statusDanger : c.foregroundMuted, fontSize: 10, lineHeight: 18, marginTop: 8 }}>{confirmDelete ? '再次点击将删除任务及其附件，此操作无法撤销。' : '仅从未启动过的任务可以直接删除。'}</Text></View>}
@@ -700,17 +750,18 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, close,
   </>;
 }
 
-function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled, busy, defaultModel, initialTitle = '', inboxId, setDefaultModel, onDirtyChange, onCloseBlockedChange, close, create }: { c: Colors; snapshot?: Snapshot; workspaceId?: string; projectId: string; web: boolean; shortcutEnabled: boolean; busy: boolean; defaultModel: string; initialTitle?: string; inboxId?: string; setDefaultModel(model: string): void; onDirtyChange(dirty: boolean): void; onCloseBlockedChange(blocked: boolean): void; close(): void; create(input: CreateInput): Promise<boolean> }) {
+function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled, busy, defaultModel, projectBaseDirectory, initialTitle = '', inboxId, setDefaultModel, onDirtyChange, onCloseBlockedChange, close, createProject, create }: { c: Colors; snapshot?: Snapshot; workspaceId?: string; projectId: string; web: boolean; shortcutEnabled: boolean; busy: boolean; defaultModel: string; projectBaseDirectory: string; initialTitle?: string; inboxId?: string; setDefaultModel(model: string): void; onDirtyChange(dirty: boolean): void; onCloseBlockedChange(blocked: boolean): void; close(): void; createProject(input: CreateProjectWorkspaceInput): Promise<Workspace>; create(input: CreateInput): Promise<boolean> }) {
   const [clientRequestId] = useState(clientUuid);
   const [title, setTitle] = useState(initialTitle), [description, setDescription] = useState(''), [tags, setTags] = useState('');
   const [attachments, setAttachments] = useState<CreateAttachmentInput[]>([]);
   const initialWorkspace = useRef(workspaceId ?? snapshot?.workspaces.find(w => !projectId || w.projectId === projectId)?.id ?? '').current;
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [createdWorkspaces, setCreatedWorkspaces] = useState<Workspace[]>([]);
   const availableModels = snapshot?.models ?? [];
   const initialProvider = useRef(availableModels.some(model => model.id === defaultModel) ? defaultModel : availableModels[0]?.id ?? '').current;
   const [provider, setProvider] = useState(initialProvider);
   const selectedModel = availableModels.find(model => model.id === provider);
-  const selectableWorkspaces = (snapshot?.workspaces ?? []).filter(w => !workspaceId || w.id === workspaceId);
+  const selectableWorkspaces = [...new Map([...(snapshot?.workspaces ?? []), ...createdWorkspaces].map(w => [w.id, w])).values()];
   const [modeSelection, setModeSelection] = useState<{ provider: string; id: string } | null>(null);
   const modeProvider = provider.split('/')[0];
   const modes = (snapshot?.modes ?? []).filter(mode => mode.provider === modeProvider);
@@ -757,8 +808,8 @@ function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled,
       <Label c={c}>图片与文件</Label>
       {web ? <AttachmentPicker c={c} attachments={attachments} disabled={busy || submitting} onChange={value => { onDirtyChange(true); setAttachments(value); }} onError={setError} onReadingChange={reading => { onCloseBlockedChange(reading || submitting); setReadingAttachments(reading); }} /> : <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: 18 }}>请在桌面端拖拽或选择附件。</Text>}
       <Label c={c}>工作区</Label>
-      <WorkspacePicker c={c} workspaces={selectableWorkspaces} value={workspace} disabled={busy || submitting || Boolean(workspaceId)} onChange={id => { onDirtyChange(true); setWorkspace(id); }} />
-      {!snapshot?.workspaces.length && <Text style={{ color: c.statusWarning, fontSize: 12, marginBottom: 15 }}>请先在 Paseo 中创建一个工作区。</Text>}
+      <WorkspacePicker c={c} workspaces={selectableWorkspaces} value={workspace} disabled={busy || submitting} projectBaseDirectory={projectBaseDirectory} onCreateProject={async projectName => { const created = await createProject({ projectName }); setCreatedWorkspaces(current => [...current.filter(item => item.id !== created.id), created]); return created; }} onChange={id => { onDirtyChange(true); setWorkspace(id); }} />
+      {!snapshot?.workspaces.length && !projectBaseDirectory && <Text style={{ color: c.statusWarning, fontSize: 12, marginBottom: 15 }}>请先在 Paseo 中创建工作区，或在插件设置中配置项目基础目录。</Text>}
       <Label c={c}>Agent / 模型</Label><View style={{ ...wrap, marginBottom: 10 }}>{snapshot?.models.map(m => <Button key={m.id} c={c} small icon="Bot" active={provider === m.id} onPress={() => { onDirtyChange(true); setProvider(m.id); }}>{m.provider} / {m.label}</Button>)}</View>
       {provider && <View style={{ ...row, marginBottom: 20 }}><Button c={c} small icon={defaultModel === provider ? 'Star' : 'StarOff'} active={defaultModel === provider} onPress={() => setDefaultModel(provider)}>{defaultModel === provider ? '当前默认模型' : '设为默认模型'}</Button></View>}
       {!snapshot?.models.length && <Text style={{ color: c.statusWarning, fontSize: 12, marginBottom: 15 }}>{snapshot?.providerError || '未发现可用模型，请先在 Paseo 配置提供商。'}</Text>}

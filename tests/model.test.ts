@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildCards, defaultModeId, defaultThinkingOptionId, emptyStore, filterCards, metadataSchema, resolveStage, storeSchema, taskSchema } from '../shared/model';
 import { completeReviewInput, patchInput, createInput } from '../shared/contracts';
 import { fixture } from '../preview/fixture';
+import { kanbanSettingsSchema } from '../shared/settings';
 
 test('partial RPC inputs do not introduce defaults or erase unrelated metadata', () => {
   const input = patchInput.parse({ id: 'agent:one', patch: { pinned: true } });
@@ -66,6 +67,12 @@ test('create RPC validates attachment metadata and applies an empty default', ()
   const attachment = { id: '99999999-9999-4999-8999-999999999999', fileName: 'mock.png', mimeType: 'image/png', size: 3, dataBase64: Buffer.from('abc').toString('base64') };
   assert.equal(createInput.safeParse({ ...base, attachments: [attachment] }).success, true);
   assert.equal(createInput.safeParse({ ...base, attachments: [{ ...attachment, dataBase64: 'not base64' }] }).success, false);
+});
+test('project base directory settings accept empty or absolute paths only', () => {
+  assert.equal(kanbanSettingsSchema.parse({}).projectBaseDirectory, '');
+  assert.equal(kanbanSettingsSchema.parse({ projectBaseDirectory: ' J:\\projects ' }).projectBaseDirectory, 'J:\\projects');
+  assert.equal(kanbanSettingsSchema.parse({ projectBaseDirectory: '/srv/projects' }).projectBaseDirectory, '/srv/projects');
+  assert.throws(() => kanbanSettingsSchema.parse({ projectBaseDirectory: 'relative/projects' }), /绝对路径/);
 });
 test('all existing sessions appear without a manual import', () => {
   const snapshot = fixture(); snapshot.store = emptyStore();

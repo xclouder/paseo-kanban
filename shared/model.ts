@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { projectLayoutSchema } from './projects';
+import { kanbanSettingsSchema } from './settings';
 
 export const stages = ['todo', 'running', 'blocked', 'review', 'done'] as const;
 export const stageNames: Record<Stage, string> = { todo: '待办', running: '执行中', blocked: '需关注', review: '待审核', done: '已完成' };
@@ -49,6 +50,7 @@ export const storeSchema = z.object({
   tasks: z.record(z.string(), taskSchema),
   inbox: z.record(z.string(), inboxEntrySchema).default({}),
   projectLayout: projectLayoutSchema.default(() => projectLayoutSchema.parse({})),
+  settings: kanbanSettingsSchema.default(() => kanbanSettingsSchema.parse({})),
 });
 export type BoardStore = z.infer<typeof storeSchema>;
 export const emptyStore = (): BoardStore => storeSchema.parse({ version: 1, sessions: {}, tasks: {} });

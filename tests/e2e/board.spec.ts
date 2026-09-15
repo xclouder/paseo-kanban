@@ -22,6 +22,7 @@ test('capture a global Inbox item and convert it into a task', async ({ page }) 
   await page.getByRole('button', { name: '创建待办任务', exact: true }).click();
 
   await expect(page.getByRole('button', { name: '查看任务 全局收集的新想法', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '关闭详情', exact: true }).click();
   await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
   await expect(page.getByTestId('inbox-panel')).not.toContainText('全局收集的新想法');
 });
@@ -98,6 +99,23 @@ test('search across projects and clear to restore all sessions', async ({ page }
   await page.keyboard.press('/');
   await expect(page.getByLabel('搜索任务', { exact: true })).toBeFocused();
   expect(errors).toEqual([]);
+});
+
+test('open task details in a centered modal without narrowing the board', async ({ page }) => {
+  await page.goto('/');
+  const column = page.getByTestId('column-todo');
+  const before = await column.boundingBox();
+  await page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true }).click();
+
+  const detail = page.getByTestId('task-detail-dialog');
+  await expect(detail).toBeVisible();
+  await expect(page.getByRole('dialog', { name: '任务详情：设计任务通知与收件箱', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  const dialogBox = await detail.boundingBox();
+  const viewport = page.viewportSize()!;
+  expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - viewport.width / 2)).toBeLessThan(2);
+  expect(Math.abs(dialogBox!.y + dialogBox!.height / 2 - viewport.height / 2)).toBeLessThan(2);
+  expect((await column.boundingBox())!.width).toBeCloseTo(before!.width, 0);
 });
 
 test('resize the project sidebar and restore its width', async ({ page }) => {
@@ -218,6 +236,42 @@ test('filter workspaces, paste an attachment, and remember the default model', a
   await expect(page.getByRole('button', { name: '当前默认模型', exact: true })).toBeVisible();
 });
 
+test('create a project workspace while creating a task', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.getByLabel('任务标题', { exact: true }).fill('初始化新产品');
+  await page.getByRole('button', { name: '选择工作区，当前 paseo-kanban / main', exact: true }).click();
+  await page.getByRole('button', { name: '新建项目', exact: true }).click();
+  await expect(page.getByText('将在 J:\\ai-ideas 下创建同名项目目录，并自动创建工作区。')).toBeVisible();
+  await page.getByLabel('新项目名称', { exact: true }).fill('brand-new-product');
+  await page.getByRole('button', { name: '创建项目和工作区', exact: true }).click();
+  await expect(page.getByRole('button', { name: '选择工作区，当前 brand-new-product / brand-new-product', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '创建待办任务', exact: true }).click();
+  await expect(page.getByRole('button', { name: '查看任务 初始化新产品', exact: true })).toBeVisible();
+  await expect(page.getByTestId(/card-task:/).filter({ hasText: '初始化新产品' })).toContainText('brand-new-product');
+});
+
+test('show an actionable error when a new project cannot be created', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.getByRole('button', { name: '选择工作区，当前 paseo-kanban / main', exact: true }).click();
+  await page.getByRole('button', { name: '新建项目', exact: true }).click();
+  await page.getByLabel('新项目名称', { exact: true }).fill('paseo-kanban');
+  await page.getByRole('button', { name: '创建项目和工作区', exact: true }).click();
+  await expect(page.getByTestId('workspace-subpanel').getByRole('alert')).toContainText('项目目录已存在');
+  await expect(page.getByLabel('新项目名称', { exact: true })).toBeVisible();
+});
+
+test('workspace board can target another existing workspace or a new project', async ({ page }) => {
+  await page.goto('/?workspace-board');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  const picker = page.getByRole('button', { name: '选择工作区，当前 paseo-kanban / main', exact: true });
+  await expect(picker).toBeEnabled();
+  await picker.click();
+  await expect(page.getByRole('button', { name: '选择工作区 agent-service / feature/events', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '新建项目', exact: true })).toBeVisible();
+});
+
 test('change workspace and paste another attachment before a task starts', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '新建任务', exact: true }).click();
@@ -245,7 +299,7 @@ test('change workspace and paste another attachment before a task starts', async
 test('paste goes only to the visible new-task attachment picker', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true }).click();
-  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.keyboard.press('n');
   await page.evaluate(() => {
     const transfer = new DataTransfer();
     transfer.items.add(new File(['single target'], 'only-new-task.png', { type: 'image/png' }));
@@ -284,7 +338,7 @@ test('confirm before discarding a changed new task with Escape', async ({ page }
 
   await page.getByRole('button', { name: /^查看任务 / }).first().click();
   await expect(page.getByLabel('关闭详情', { exact: true })).toHaveCount(1);
-  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.keyboard.press('n');
   await page.keyboard.down('Escape');
   await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(0);
   await page.keyboard.up('Escape');
@@ -348,6 +402,9 @@ test('create, save, launch and navigate with persisted task metadata', async ({ 
   await page.getByLabel('标签（逗号分隔）', { exact: true }).fill('回归, 测试');
   await page.getByRole('button', { name: '创建待办任务', exact: true }).click();
   await expect(page.getByTestId('column-todo').getByRole('button', { name: '查看任务 端到端验证任务', exact: true })).toBeVisible();
+  const detail = page.getByTestId('task-detail-dialog');
+  const startButton = detail.getByRole('button', { name: '开始执行', exact: true });
+  expect((await startButton.boundingBox())!.y).toBeLessThan((await detail.getByLabel('任务标题', { exact: true }).boundingBox())!.y);
   await expect(page.getByTestId('task-run-mode')).toHaveText('Full Access');
   await expect(page.getByTestId('task-thinking-mode')).toHaveText('Low');
   await page.getByLabel('任务标题', { exact: true }).fill('修改后的验证任务');
@@ -356,12 +413,29 @@ test('create, save, launch and navigate with persisted task metadata', async ({ 
   await expect(page.getByRole('button', { name: '开始执行', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '开始执行', exact: true }).click();
   await expect(page.getByTestId('column-running').getByRole('button', { name: '查看任务 修改后的验证任务', exact: true })).toBeVisible();
+  await expect(page.locator('#preview-event')).toHaveText('');
+  const openConversation = detail.getByRole('button', { name: '打开 Paseo 会话', exact: true });
+  await expect(openConversation).toBeVisible();
+  expect((await openConversation.boundingBox())!.y).toBeLessThan((await detail.getByLabel('任务标题', { exact: true }).boundingBox())!.y);
+  await openConversation.click();
   await expect(page.locator('#preview-event')).toContainText('打开会话');
   await page.reload();
   await page.getByRole('button', { name: '查看任务 修改后的验证任务', exact: true }).click();
   await expect(page.getByLabel('任务说明', { exact: true })).toHaveValue('确认任务内容在启动前被保存');
   await expect(page.getByLabel('标签（逗号分隔）', { exact: true })).toHaveValue('回归, 测试');
   await expect(page.getByTestId('task-run-mode')).toHaveText('Full Access');
+});
+
+test('show launch failures inside the task modal and keep the task ready to retry', async ({ page }) => {
+  await page.goto('/?launch-error');
+  await page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true }).click();
+  const detail = page.getByTestId('task-detail-dialog');
+  await detail.getByRole('button', { name: '开始执行', exact: true }).click();
+
+  await expect(detail.getByRole('alert')).toContainText('Agent 启动失败，请稍后重试。');
+  await expect(detail.getByRole('button', { name: '开始执行', exact: true })).toBeEnabled();
+  await expect(detail.getByRole('button', { name: '打开 Paseo 会话', exact: true })).toHaveCount(0);
+  await expect(page.locator('#preview-event')).toHaveText('');
 });
 
 test('run modes follow provider selection and persist an explicit choice', async ({ page }) => {
@@ -476,6 +550,11 @@ test('mobile uses explicit move controls and light theme renders', async ({ page
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?light');
   await page.getByRole('button', { name: '查看任务 为会话增加标签和快捷筛选', exact: true }).click();
+  const detail = page.getByTestId('task-detail-dialog');
+  const detailBox = await detail.boundingBox();
+  expect(detailBox!.width).toBeLessThanOrEqual(366);
+  expect(detailBox!.height).toBeLessThanOrEqual(820);
+  await expect(detail.getByRole('button', { name: '开始执行', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '已完成', exact: true }).click();
   await page.getByRole('button', { name: '关闭详情', exact: true }).click();
   await page.getByLabel('搜索任务', { exact: true }).fill('为会话增加标签');

@@ -2,7 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { access, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createPaseoApi, type PaseoApi } from '@getpaseo/client';
 import { Store } from '../server/store';
 import { BoardService, collectPages } from '../server/service';
@@ -13,7 +13,7 @@ async function setup(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'paseo-kanban-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const store = new Store(join(directory, 'board.json'));
-  return { store, service: new BoardService(store) };
+  return { directory, store, service: new BoardService(store) };
 }
 function mockApi() {
   const snapshot = fixture();
@@ -21,6 +21,7 @@ function mockApi() {
   let creates = 0, failure = false, loseResponse = false;
   const configs: { provider: string; modeId?: string; thinkingOptionId?: string }[] = [];
   const createOptions: Record<string, unknown>[] = [];
+  const openedPaths: string[] = [];
   const api = {
     agents: {
       list: async (opts?: { filter?: { labels?: Record<string, string> } }) => ({ entries: agents.filter(a => !opts?.filter?.labels || Object.entries(opts.filter.labels).every(([k,v]) => a.labels[k] === v)).map(agent => ({ agent })), pageInfo: { hasMore: false, nextCursor: null } }),
@@ -28,6 +29,12 @@ function mockApi() {
     },
     workspaces: {
       list: async () => ({ entries: snapshot.workspaces.map(w => ({ ...w, projectDisplayName: w.project, projectRootPath: w.directory, workspaceDirectory: w.directory })), pageInfo: { hasMore: false, nextCursor: null } }),
+      open: async ({ cwd }: { cwd: string }) => {
+        openedPaths.push(cwd);
+        const name = basename(cwd);
+        const workspace = { id: `workspace-created-${openedPaths.length}`, name, title: null, projectDisplayName: name, projectId: `project-created-${openedPaths.length}`, projectRootPath: cwd, workspaceDirectory: cwd };
+        return { id: workspace.id, current: () => workspace, refresh: async () => workspace };
+      },
       ref: (id: string) => ({ refresh: async () => { const w = snapshot.workspaces.find(w => w.id === id); return w ? { ...w, workspaceDirectory: w.directory, projectRootPath: w.directory } : null; }, agents: { create: async (options: { config: { provider: string; modeId?: string; thinkingOptionId?: string }; labels: Record<string,string>; title: string }) => {
         creates++; assert.match(options.config.provider, /^[^/]+\/.+$/);
         createOptions.push(options as unknown as Record<string, unknown>);
@@ -39,7 +46,7 @@ function mockApi() {
     },
     providers: { snapshot: async () => ({ requestId: 'snapshot', snapshotHash: 'snapshot', fetchedAt: new Date().toISOString(), entries: [{ provider: 'codex', status: 'ready', enabled: true, models: [{ id: 'model', label: 'Model', thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }, { id: 'high', label: 'High' }], defaultThinkingOptionId: 'medium' }], modes: snapshot.modes.filter(mode => mode.provider === 'codex') }] }), listAvailable: async () => ({ providers: [{ provider: 'codex', available: true }] }), listModels: async () => ({ models: [{ id: 'model', label: 'Model', thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }, { id: 'high', label: 'High' }], defaultThinkingOptionId: 'medium' }] }), listModes: async () => ({ modes: snapshot.modes.filter(mode => mode.provider === 'codex') }) },
   } as unknown as PaseoApi;
-  return { api, agents, configs, createOptions, get creates() { return creates; }, fail: () => { failure = true; }, lose: () => { loseResponse = true; } };
+  return { api, agents, configs, createOptions, openedPaths, get creates() { return creates; }, fail: () => { failure = true; }, lose: () => { loseResponse = true; } };
 }
 const input = { clientRequestId: '66666666-6666-4666-8666-666666666666', title: 'Ship feature', description: 'Acceptance criteria', workspaceId: 'workspace-web', provider: 'codex/model', priority: 'high' as const, tags: ['test'] };
 
@@ -70,6 +77,40 @@ test('project organization merges concurrent edits and survives store reload wit
   assert.equal(after.projectLayout.membership['project-kanban'], undefined);
   assert.deepEqual(after.tasks[task.id], task);
   await assert.rejects(() => service.organizeProjects({ type: 'moveProject', id: 'missing', groupId: null }, api), /项目已不可用/);
+});
+
+test('creates a project directory and opens its first Paseo workspace', async t => {
+  const { directory, service, store } = await setup(t); const mock = mockApi();
+  const baseDirectory = join(directory, 'projects');
+  await service.saveSettings({ projectBaseDirectory: baseDirectory });
+  assert.equal((await new Store(store.file).read()).settings.projectBaseDirectory, baseDirectory);
+  const workspace = await service.createProjectWorkspace({ projectName: '新产品' }, mock.api);
+  assert.equal(workspace.project, '新产品');
+  assert.equal(workspace.name, '新产品');
+  assert.equal(workspace.directory, join(baseDirectory, '新产品'));
+  assert.deepEqual(mock.openedPaths, [join(baseDirectory, '新产品')]);
+  await access(workspace.directory);
+});
+
+test('new projects reject unsafe names, relative roots, and existing directories', async t => {
+  const { directory, service } = await setup(t); const mock = mockApi();
+  const baseDirectory = join(directory, 'projects');
+  await assert.rejects(() => service.createProjectWorkspace({ projectName: 'safe' }, mock.api), /配置项目基础目录/);
+  await assert.rejects(() => service.saveSettings({ projectBaseDirectory: 'relative-projects' }), /绝对路径/);
+  await service.saveSettings({ projectBaseDirectory: baseDirectory });
+  await assert.rejects(() => service.createProjectWorkspace({ projectName: '../escape' }, mock.api), /不能用于目录/);
+  await service.createProjectWorkspace({ projectName: 'duplicate' }, mock.api);
+  await assert.rejects(() => service.createProjectWorkspace({ projectName: 'duplicate' }, mock.api), /目录已存在/);
+  assert.equal(mock.openedPaths.length, 1);
+});
+
+test('a failed Paseo workspace open only rolls back the new empty project directory', async t => {
+  const { directory, service } = await setup(t); const mock = mockApi();
+  const baseDirectory = join(directory, 'projects');
+  await service.saveSettings({ projectBaseDirectory: baseDirectory });
+  mock.api.workspaces.open = async () => { throw new Error('daemon unavailable'); };
+  await assert.rejects(() => service.createProjectWorkspace({ projectName: 'rollback-me' }, mock.api), /daemon unavailable/);
+  await assert.rejects(() => access(join(baseDirectory, 'rollback-me')));
 });
 
 test('pagination loads beyond first hundred and rejects cursor loops', async () => {

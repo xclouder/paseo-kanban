@@ -1,12 +1,13 @@
-import type { PaseoApi, PaseoAgent } from '@getpaseo/client';
-import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
-import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, inboxEntrySchema, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment } from '../shared/model';
+import type { PaseoApi, PaseoAgent, PaseoWorkspace } from '@getpaseo/client';
+import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInput } from '../shared/contracts';
+import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, inboxEntrySchema, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment, type Workspace } from '../shared/model';
 import { Store } from './store';
 import { applyProjectAction, type ProjectAction } from '../shared/projects';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, extname, join, resolve } from 'node:path';
+import { access, lstat, mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { kanbanSettingsSchema, type KanbanSettings } from '../shared/settings';
 
 const agentRefreshConcurrency = 25;
 const providerDiscoveryTimeoutMs = 3000;
@@ -48,6 +49,16 @@ export function summarizeAgent(agent: PaseoAgent): Agent {
     updatedAt: agent.updatedAt, createdAt: agent.createdAt, lastUserMessageAt: agent.lastUserMessageAt,
     attentionReason: agent.attentionReason ?? null, pendingPermission: agent.pendingPermissions.length > 0,
     archived: Boolean(agent.archivedAt), labels: agent.labels,
+  };
+}
+
+function summarizeWorkspace(workspace: PaseoWorkspace): Workspace {
+  return {
+    id: workspace.id,
+    name: workspace.title || workspace.name,
+    project: workspace.projectDisplayName,
+    projectId: workspace.projectId,
+    directory: workspace.workspaceDirectory ?? workspace.projectRootPath,
   };
 }
 
@@ -196,7 +207,50 @@ export class BoardService {
       collectPages(cursor => paseo.workspaces.list({ sort: [{ key: 'name', direction: 'asc' }], page: { limit: 100, cursor } })),
       this.providerOptions(paseo),
     ]);
-    return { store, agents, workspaces: workspaces.map(w => ({ id: w.id, name: w.title || w.name, project: w.projectDisplayName, projectId: w.projectId, directory: w.workspaceDirectory ?? w.projectRootPath })), ...providers, fetchedAt: new Date().toISOString() };
+    return { store, agents, workspaces: workspaces.map(summarizeWorkspace), ...providers, fetchedAt: new Date().toISOString() };
+  }
+
+  async readSettings(): Promise<KanbanSettings> {
+    return (await this.store.read()).settings;
+  }
+
+  async saveSettings(input: KanbanSettings): Promise<KanbanSettings> {
+    const settings = kanbanSettingsSchema.parse(input);
+    return this.store.update(data => {
+      data.settings = settings;
+      return data.settings;
+    });
+  }
+
+  async createProjectWorkspace(input: CreateProjectWorkspaceInput, paseo: PaseoApi): Promise<Workspace> {
+    const { projectName } = createProjectWorkspaceInput.parse(input);
+    const { projectBaseDirectory: baseDirectory } = await this.readSettings();
+    if (!baseDirectory) throw new Error('请先在插件设置中配置项目基础目录。');
+    if (!isAbsolute(baseDirectory)) throw new Error('项目基础目录必须是绝对路径。');
+    const root = resolve(baseDirectory);
+    const target = resolve(root, projectName);
+    const sameParent = process.platform === 'win32'
+      ? dirname(target).toLocaleLowerCase() === root.toLocaleLowerCase()
+      : dirname(target) === root;
+    if (!sameParent) throw new Error('项目目录必须位于配置的基础目录中。');
+    await mkdir(root, { recursive: true });
+    const rootInfo = await stat(root);
+    if (!rootInfo.isDirectory()) throw new Error('配置的项目基础目录不是文件夹。');
+    try {
+      await mkdir(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`项目目录已存在：${target}`);
+      throw error;
+    }
+    try {
+      const handle = await paseo.workspaces.open({ cwd: target });
+      const workspace = handle.current() ?? await handle.refresh();
+      if (!workspace) throw new Error('Paseo 未返回新工作区。');
+      return summarizeWorkspace(workspace);
+    } catch (error) {
+      await rmdir(target).catch(() => undefined);
+      throw new Error(`无法为新项目创建工作区：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   private async metadata(data: BoardStore, id: string, paseo: PaseoApi): Promise<{ meta: Metadata; agent?: Agent }> {
     if (id.startsWith('agent:')) {
