@@ -490,22 +490,28 @@ export class BoardService {
       return { ok: true };
     });
   }
-  async launch(id: string, paseo: PaseoApi) {
+  async launch(id: string, paseo: PaseoApi, confirmedWorkspaceId?: string) {
     return this.store.exclusive(async () => {
       const data = await this.store.read();
       const task = data.tasks[id];
       if (!task) throw new Error('任务不存在。');
-      if (task.agentId) return { agentId: task.agentId };
+      if (task.agentId) return { status: 'started' as const, agentId: task.agentId };
       if (!/^[^/]+\/.+$/.test(task.provider)) throw new Error('任务缺少具体模型，请新建任务并选择可用模型。');
       // Reconcile a lost response before permitting any duplicate execution.
       const existing = await collectPages(cursor => paseo.agents.list({ filter: { labels: { 'paseo-kanban-task': id }, includeArchived: true }, page: { limit: 100, cursor } }));
       if (existing.length) {
         task.agentId = existing[0].agent.id; task.launchState = 'started'; task.stage = undefined;
-        await this.store.write(data); return { agentId: task.agentId };
+        await this.store.write(data); return { status: 'started' as const, agentId: task.agentId };
       }
       if (task.launchState) throw new Error('上次启动结果尚未确认。请先在 Paseo 检查是否已创建会话，避免重复执行；刷新后重试可关联已创建的会话。');
       const workspace = await paseo.workspaces.ref(task.workspaceId).refresh();
       if (!workspace) throw new Error('工作区不可用，请先在 Paseo 恢复该工作区。');
+      const runningAgents = (await this.agents(paseo))
+        .filter(agent => agent.workspaceId === task.workspaceId && agentIsRunning(agent))
+        .map(agent => ({ id: agent.id, title: agent.title }));
+      if (runningAgents.length && confirmedWorkspaceId !== task.workspaceId) {
+        return { status: 'confirmation_required' as const, workspace: summarizeWorkspace(workspace), runningAgents };
+      }
       const providerId = task.provider.split('/')[0];
       const modelId = task.provider.slice(providerId.length + 1);
       const [modeResult, modelResult] = await Promise.all([
@@ -547,7 +553,7 @@ export class BoardService {
         });
         task.agentId = agent.id; task.launchState = 'started'; task.stage = undefined; task.updatedAt = new Date().toISOString();
         await this.store.write(data);
-        return { agentId: agent.id };
+        return { status: 'started' as const, agentId: agent.id };
       } catch (error) {
         task.launchState = 'uncertain'; await this.store.write(data);
         throw new Error(`启动未确认：${error instanceof Error ? error.message : String(error)}。任务已保留，请检查 Paseo 会话后重试关联。`);

@@ -410,6 +410,62 @@ test('confirm before discarding a changed new task with Escape', async ({ page }
   await expect(page.getByLabel('关闭详情', { exact: true })).toHaveCount(1);
 });
 
+test('confirm before discarding task edits with Escape', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true }).click();
+  const detail = page.getByTestId('task-detail-dialog');
+  const title = detail.getByLabel('任务标题', { exact: true });
+  await title.fill('编辑到一半的任务消息');
+
+  await page.keyboard.press('Escape');
+  const confirmation = page.getByRole('alert').filter({ hasText: '放弃未保存的修改？' });
+  await expect(confirmation).toBeVisible();
+  await expect(detail).toBeVisible();
+  await page.keyboard.press('Tab');
+  await expect(confirmation.locator('button:focus')).toHaveCount(1);
+  await page.keyboard.press('n');
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(0);
+
+  await page.keyboard.press('Escape');
+  await expect(confirmation).toHaveCount(0);
+  await expect(title).toHaveValue('编辑到一半的任务消息');
+
+  await page.keyboard.press('Escape');
+  await confirmation.getByRole('button', { name: '继续编辑', exact: true }).click();
+  await expect(title).toHaveValue('编辑到一半的任务消息');
+
+  await detail.getByRole('button', { name: '关闭详情', exact: true }).click();
+  await confirmation.getByRole('button', { name: '放弃修改', exact: true }).click();
+  await expect(detail).toHaveCount(0);
+
+  await page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(detail).toHaveCount(0);
+  await expect(confirmation).toHaveCount(0);
+});
+
+test('do not close task details while a pasted attachment is still loading', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true }).click();
+  const detail = page.getByTestId('task-detail-dialog');
+  await page.evaluate(() => {
+    const original = FileReader.prototype.readAsDataURL;
+    FileReader.prototype.readAsDataURL = function(blob) { setTimeout(() => original.call(this, blob), 500); };
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['detail attachment'], 'slow-detail.png', { type: 'image/png' }));
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+
+  await expect(detail.getByText('正在读取附件…', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: '放弃未保存的修改？' })).toHaveCount(0);
+
+  await expect(detail.getByText('slow-detail.png', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('alert').filter({ hasText: '放弃未保存的修改？' })).toBeVisible();
+});
+
 test('create a new task with Ctrl+Enter', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '新建任务', exact: true }).click();
@@ -477,6 +533,16 @@ test('create, save, launch and navigate with persisted task metadata', async ({ 
   await page.getByRole('button', { name: '保存修改', exact: true }).click();
   await expect(page.getByRole('button', { name: '开始执行', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '开始执行', exact: true }).click();
+  const workspaceWarning = page.getByRole('alert').filter({ hasText: '这个工作区已有任务在执行' });
+  await expect(workspaceWarning).toContainText('当前有 2 个任务正在执行');
+  await expect(workspaceWarning).toContainText('登录流程增加 OAuth 回调处理');
+  await expect(workspaceWarning).toContainText('优化长列表渲染，减少滚动卡顿');
+  await workspaceWarning.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(workspaceWarning).toHaveCount(0);
+  await expect(page.getByTestId('column-todo').getByRole('button', { name: '查看任务 修改后的验证任务', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '开始执行', exact: true }).click();
+  await workspaceWarning.getByRole('button', { name: '仍要开始', exact: true }).click();
+  await expect(workspaceWarning).toHaveCount(0);
   await expect(page.getByTestId('column-running').getByRole('button', { name: '查看任务 修改后的验证任务', exact: true })).toBeVisible();
   await expect(page.locator('#preview-event')).toHaveText('');
   const openConversation = detail.getByRole('button', { name: '打开 Paseo 会话', exact: true });
@@ -536,6 +602,7 @@ test('launched legacy tasks do not guess an unrecorded thinking mode', async ({ 
   const taskCard = () => page.getByTestId('card-task:preview-02').getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true });
   await taskCard().click();
   await page.getByRole('button', { name: '开始执行', exact: true }).click();
+  await page.getByRole('button', { name: '仍要开始', exact: true }).click();
   await page.evaluate(() => {
     const key = 'paseo-kanban-preview-v1';
     const snapshot = JSON.parse(localStorage.getItem(key)!);

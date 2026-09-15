@@ -5,7 +5,7 @@ import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/pl
 import { useRpc } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, hideDoneCards, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, patchInboxEntry, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type HideDoneInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
+import { completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, hideDoneCards, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, patchInboxEntry, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type HideDoneInput, type LaunchInput, type LaunchResult, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
 import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type InboxEntry, type Snapshot, type Stage, type Task, type TaskAttachment, type Workspace } from '../shared/model';
 import { organizeProjects } from '../shared/contracts';
 import type { ProjectAction } from '../shared/projects';
@@ -24,7 +24,7 @@ export interface BoardApi {
   createProject(input: CreateProjectWorkspaceInput): Promise<Workspace>;
   patchInbox(input: PatchInboxInput): Promise<InboxEntry>;
   removeInbox(input: { id: string }): Promise<unknown>;
-  launch(input: { id: string }): Promise<{ agentId: string }>;
+  launch(input: LaunchInput): Promise<LaunchResult>;
   remove(input: { id: string }): Promise<unknown>;
 }
 
@@ -224,6 +224,9 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const [attention, setAttention] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [detailDirty, setDetailDirty] = useState(false);
+  const [confirmingDetailClose, setConfirmingDetailClose] = useState(false);
+  const [detailCloseBlocked, setDetailCloseBlocked] = useState(false);
   const [inboxView, setInboxView] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createSource, setCreateSource] = useState<InboxEntry | null>(null);
@@ -235,6 +238,11 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const creatingRef = useRef(creating), createDirtyRef = useRef(createDirty), confirmingCreateCloseRef = useRef(confirmingCreateClose);
   creatingRef.current = creating; createDirtyRef.current = createDirty; confirmingCreateCloseRef.current = confirmingCreateClose;
   const handledCreateEscapeRef = useRef(false);
+  const detailDirtyRef = useRef(detailDirty), confirmingDetailCloseRef = useRef(confirmingDetailClose);
+  detailDirtyRef.current = detailDirty; confirmingDetailCloseRef.current = confirmingDetailClose;
+  const detailCloseBlockedRef = useRef(detailCloseBlocked);
+  detailCloseBlockedRef.current = detailCloseBlocked;
+  const handledDetailEscapeRef = useRef(false);
   const createCloseBlockedRef = useRef(createCloseBlocked);
   createCloseBlockedRef.current = createCloseBlocked;
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
@@ -262,6 +270,15 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     else { creatingRef.current = false; setCreating(false); setCreateSource(null); }
   };
   const discardCreate = () => { changeCreateDirty(false); hideCreateConfirmation(); creatingRef.current = false; setCreating(false); setCreateSource(null); };
+  const changeDetailDirty = (dirty: boolean) => { detailDirtyRef.current = dirty; setDetailDirty(dirty); };
+  const hideDetailConfirmation = () => { confirmingDetailCloseRef.current = false; setConfirmingDetailClose(false); };
+  const changeDetailCloseBlocked = (blocked: boolean) => { detailCloseBlockedRef.current = blocked; setDetailCloseBlocked(blocked); };
+  const closeDetail = () => { changeDetailDirty(false); changeDetailCloseBlocked(false); hideDetailConfirmation(); setSelected(null); };
+  const requestDetailClose = () => {
+    if (detailCloseBlockedRef.current) return;
+    if (detailDirtyRef.current) { confirmingDetailCloseRef.current = true; setConfirmingDetailClose(true); }
+    else closeDetail();
+  };
   useEffect(() => {
     if (!message || message.error) return;
     const timer = setTimeout(() => setMessage(null), 3500);
@@ -288,6 +305,10 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
         event.preventDefault(); event.stopImmediatePropagation(); handledCreateEscapeRef.current = false;
         return;
       }
+      if (event.key === 'Escape' && event.type === 'keyup' && handledDetailEscapeRef.current) {
+        event.preventDefault(); event.stopImmediatePropagation(); handledDetailEscapeRef.current = false;
+        return;
+      }
       if (event.key === 'Escape' && document.querySelector('[data-testid="workspace-subpanel"]')) return;
       if (event.key === 'Escape' && creatingRef.current) {
         event.preventDefault(); event.stopImmediatePropagation();
@@ -298,16 +319,29 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
         return;
       }
       if (creatingRef.current) return;
+      if (event.key === 'Escape' && selected) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (event.type === 'keyup' || event.repeat) return;
+        handledDetailEscapeRef.current = true;
+        if (confirmingDetailCloseRef.current) hideDetailConfirmation();
+        else requestDetailClose();
+        return;
+      }
+      if (confirmingDetailCloseRef.current) return;
       const target = event.target as HTMLElement;
       if (target.closest('input, textarea, [contenteditable="true"]') || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === '/') { event.preventDefault(); event.stopImmediatePropagation(); search.current?.focus(); }
       if (event.key.toLowerCase() === 'n') { event.preventDefault(); event.stopImmediatePropagation(); openCreate(); }
-      if (event.key === 'Escape' && selected) { event.stopImmediatePropagation(); setSelected(null); }
     };
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', onKey, true);
     return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKey, true); };
   }, [inboxView, keyboardScopeTestId, layout.platform, selected]);
+  useEffect(() => {
+    changeDetailDirty(false);
+    changeDetailCloseBlocked(false);
+    hideDetailConfirmation();
+  }, [selected]);
   useEffect(() => {
     if (layout.platform !== 'web' || typeof document === 'undefined') return;
     const refreshInbox = () => { void board.refetch(); };
@@ -403,7 +437,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     {amount !== undefined && <Text style={{ color: c.foregroundMuted, fontSize: 11 }}>{amount}</Text>}
   </Pressable>;
 
-  const detail = active && <Detail key={active.id} card={active} snapshot={board.data!} c={c} busy={busy} web={layout.platform === 'web'} pasteEnabled={!creating} navigation={navigation} notice={notice} dismissNotice={() => board.isError ? void board.refetch() : setMessage(null)} close={() => setSelected(null)}
+  const detail = active && <Detail key={active.id} card={active} snapshot={board.data!} c={c} busy={busy} web={layout.platform === 'web'} pasteEnabled={!creating} navigation={navigation} notice={notice} dismissNotice={() => board.isError ? void board.refetch() : setMessage(null)} onDirtyChange={changeDetailDirty} onCloseBlockedChange={changeDetailCloseBlocked} requestClose={requestDetailClose} close={closeDetail}
     move={async stage => {
       const id = active.id;
       const ok = await move(id, stage);
@@ -411,7 +445,14 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
       return ok;
     }}
     save={patch => run(() => api.patch({ id: active.id, patch }), '已保存')}
-    launch={() => run(() => api.launch({ id: active.id }), '任务已交给 Agent')}
+    launch={async confirmedWorkspaceId => {
+      if (busy) return;
+      try {
+        const result = await mutation.mutateAsync(() => api.launch({ id: active.id, ...(confirmedWorkspaceId ? { confirmedWorkspaceId } : {}) })) as LaunchResult;
+        if (result.status === 'started') setMessage({ text: '任务已交给 Agent', error: false });
+        return result;
+      } catch { return; }
+    }}
     remove={() => run(() => api.remove({ id: active.id }), '任务已删除')}
   />;
 
@@ -504,12 +545,15 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
         </View>}
       </View>
     </View>
-    <Modal visible={Boolean(active)} transparent animationType="fade" {...(layout.platform === 'web' ? { accessibilityViewIsModal: true, accessibilityLabel: active ? `任务详情：${active.title}` : '任务详情' } : {})} onRequestClose={() => setSelected(null)}>
+    <Modal visible={Boolean(active)} transparent animationType="fade" {...(layout.platform === 'web' ? { accessibilityViewIsModal: true, accessibilityLabel: active ? `任务详情：${active.title}` : '任务详情' } : {})} onRequestClose={requestDetailClose}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.58)', alignItems: 'center', justifyContent: 'center', padding: layout.compact ? 12 : 28 }}>
         <View testID="task-detail-dialog" {...(layout.platform === 'web' ? {} : { role: 'dialog' as const, accessibilityViewIsModal: true, accessibilityLabel: active ? `任务详情：${active.title}` : '任务详情' })} style={{ width: '100%', maxWidth: 680, maxHeight: layout.compact ? '96%' : '90%', backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 14, overflow: 'hidden' }}>
           {detail}
         </View>
       </View>
+    </Modal>
+    <Modal visible={confirmingDetailClose} transparent animationType="fade" onRequestClose={hideDetailConfirmation}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.58)', alignItems: 'center', justifyContent: 'center', padding: 20 }}><View accessibilityRole="alert" style={{ width: '100%', maxWidth: 390, backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 22 }}><View style={{ ...row, gap: 9, marginBottom: 10 }}><Icon name="CircleAlert" size={18} color={c.statusWarning} /><Text style={{ flex: 1, color: c.foreground, fontSize: 16, fontWeight: '600' }}>放弃未保存的修改？</Text></View><Text style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 19, marginBottom: 20 }}>任务内容和已添加的附件将会丢失。</Text><View style={{ ...row, justifyContent: 'flex-end', gap: 9 }}><Button c={c} onPress={closeDetail}>放弃修改</Button><Button c={c} primary onPress={hideDetailConfirmation}>继续编辑</Button></View></View></View>
     </Modal>
     <Modal visible={creating} transparent animationType="fade" onRequestClose={requestCreateClose}>
       <View style={{ flex: 1, backgroundColor: c.surface0, alignItems: 'center', justifyContent: 'center', padding: layout.compact ? 12 : 28 }}>
@@ -705,7 +749,7 @@ function StoredAttachments({ c, attachments }: { c: Colors; attachments: TaskAtt
   return <View testID="task-attachments" style={{ gap: 7, marginBottom: 10 }}>{attachments.map(attachment => <View key={attachment.id} style={{ ...row, gap: 9, padding: 10, borderWidth: 1, borderColor: c.border, borderRadius: 7, backgroundColor: c.surface0 }}><Icon name={attachment.mimeType.startsWith('image/') ? 'Image' : 'File'} size={15} color={c.foregroundMuted} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.foreground, fontSize: 11, fontWeight: '600' }}>{attachment.fileName}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 3 }}>{attachment.mimeType.startsWith('image/') ? '图片' : '文件'} · {formatBytes(attachment.size)}</Text></View><Text style={{ color: c.statusSuccess, fontSize: 10 }}>已上传</Text></View>)}</View>;
 }
 
-function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, notice, dismissNotice, close, move, save, launch, remove }: { card: Card; snapshot: Snapshot; c: Colors; busy: boolean; web: boolean; pasteEnabled: boolean; navigation: PluginSurfaceProps['navigation']; notice: Notice | null; dismissNotice(): void; close(): void; move(stage: Stage): Promise<boolean>; save(patch: PatchInput['patch']): Promise<boolean>; launch(): Promise<boolean>; remove(): Promise<boolean> }) {
+function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, notice, dismissNotice, onDirtyChange, onCloseBlockedChange, requestClose, close, move, save, launch, remove }: { card: Card; snapshot: Snapshot; c: Colors; busy: boolean; web: boolean; pasteEnabled: boolean; navigation: PluginSurfaceProps['navigation']; notice: Notice | null; dismissNotice(): void; onDirtyChange(dirty: boolean): void; onCloseBlockedChange(blocked: boolean): void; requestClose(): void; close(): void; move(stage: Stage): Promise<boolean>; save(patch: PatchInput['patch']): Promise<boolean>; launch(confirmedWorkspaceId?: string): Promise<LaunchResult | undefined>; remove(): Promise<boolean> }) {
   const [title, setTitle] = useState(card.title), [description, setDescription] = useState(card.description), [tags, setTags] = useState(card.tags.join(', '));
   const [priority, setPriority] = useState(card.priority);
   const [workspace, setWorkspace] = useState(card.workspaceId ?? '');
@@ -714,9 +758,11 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, notice
   const [formError, setFormError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [launchConflict, setLaunchConflict] = useState<Extract<LaunchResult, { status: 'confirmation_required' }> | null>(null);
   const canEditDraft = Boolean(card.task && !card.task.agentId && !card.task.launchState);
   const draftChanged = canEditDraft && (workspace !== card.workspaceId || attachmentAdditions.length > 0);
   const dirty = title !== card.title || description !== card.description || tags !== card.tags.join(', ') || priority !== card.priority || draftChanged;
+  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   const selectedWorkspace = snapshot.workspaces.find(item => item.id === workspace);
   const workspaceAvailable = Boolean(selectedWorkspace);
   const savedWorkspaceAvailable = snapshot.workspaces.some(item => item.id === card.workspaceId);
@@ -732,14 +778,18 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, notice
   else if (card.task?.launchState) launchHelp = '启动结果待确认，将检查是否已存在关联会话。';
   let launchLabel = card.task?.launchState ? '检查并关联会话' : '开始执行';
   if (launching) launchLabel = '正在启动…';
-  const startLaunch = async () => {
+  const startLaunch = async (confirmedWorkspaceId?: string) => {
     if (launching) return;
     setLaunching(true);
-    try { await launch(); }
+    try {
+      const result = await launch(confirmedWorkspaceId);
+      if (result?.status === 'confirmation_required') setLaunchConflict(result);
+      else if (result?.status === 'started') setLaunchConflict(null);
+    }
     finally { setLaunching(false); }
   };
   return <>
-    <View style={{ ...row, padding: 18, borderBottomWidth: 1, borderBottomColor: c.border, gap: 8 }}><Icon name="FileText" size={16} color={c.foregroundMuted} /><Text accessibilityRole="header" style={{ color: c.foreground, flex: 1, fontSize: 15, fontWeight: '600' }}>任务详情 {dirty ? <Text style={{ color: c.statusWarning, fontSize: 11, fontWeight: '400' }}>· 未保存</Text> : null}</Text><Button c={c} small icon="X" label="关闭详情" onPress={close} /></View>
+    <View style={{ ...row, padding: 18, borderBottomWidth: 1, borderBottomColor: c.border, gap: 8 }}><Icon name="FileText" size={16} color={c.foregroundMuted} /><Text accessibilityRole="header" style={{ color: c.foreground, flex: 1, fontSize: 15, fontWeight: '600' }}>任务详情 {dirty ? <Text style={{ color: c.statusWarning, fontSize: 11, fontWeight: '400' }}>· 未保存</Text> : null}</Text><Button c={c} small icon="X" label="关闭详情" onPress={requestClose} /></View>
     {notice && <View accessibilityRole="alert" style={{ ...row, gap: 9, paddingHorizontal: 20, paddingVertical: 12, backgroundColor: c.surface2, borderBottomWidth: 1, borderBottomColor: c.border }}><Icon name={notice.error ? 'CircleAlert' : 'Check'} size={16} color={notice.error ? c.statusDanger : c.statusSuccess} /><Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text><Button c={c} small onPress={dismissNotice}>{notice.retry ? '重试' : '关闭'}</Button></View>}
     {(canLaunch || (card.agent && navigation)) && <View testID="task-primary-action" style={{ paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: c.border, backgroundColor: c.surface2 }}>
       {canLaunch ? <Button c={c} primary icon="Play" disabled={busy || dirty || !workspaceAvailable || launching} onPress={() => void startLaunch()}>{launchLabel}</Button> : <Button c={c} primary icon="ArrowUpRight" onPress={() => navigation!.openAgent({ agentId: card.agent!.id })}>打开 Paseo 会话</Button>}
@@ -754,7 +804,7 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, notice
       {card.task && <>
         <Label c={c}>图片与文件 · {card.task.attachments.length + attachmentAdditions.length}</Label>
         {card.task.attachments.length > 0 && <StoredAttachments c={c} attachments={card.task.attachments} />}
-        {canEditDraft && web ? <AttachmentPicker c={c} attachments={attachmentAdditions} pasteEnabled={pasteEnabled} existingCount={card.task.attachments.length} existingSize={existingAttachmentSize} disabled={busy} onChange={setAttachmentAdditions} onError={setFormError} onReadingChange={setReadingAttachments} /> : card.task.attachments.length === 0 ? <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: 18 }}>无附件</Text> : <View style={{ marginBottom: 8 }} />}
+        {canEditDraft && web ? <AttachmentPicker c={c} attachments={attachmentAdditions} pasteEnabled={pasteEnabled} existingCount={card.task.attachments.length} existingSize={existingAttachmentSize} disabled={busy} onChange={setAttachmentAdditions} onError={setFormError} onReadingChange={reading => { onCloseBlockedChange(reading); setReadingAttachments(reading); }} /> : card.task.attachments.length === 0 ? <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: 18 }}>无附件</Text> : <View style={{ marginBottom: 8 }} />}
         {canEditDraft && !web && <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: 18 }}>请在桌面端粘贴、拖拽或选择附件。</Text>}
       </>}
       {formError ? <Text accessibilityRole="alert" style={{ color: c.statusDanger, fontSize: 12, marginBottom: 10 }}>{formError}</Text> : null}
@@ -772,6 +822,17 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, notice
       {card.task && !card.task.agentId && !card.task.launchState && <View style={{ marginTop: 24 }}><Button c={c} icon="Trash2" disabled={busy} onPress={() => { if (!confirmDelete) { setConfirmDelete(true); return; } void remove().then(ok => { if (ok) close(); }); }}>{confirmDelete ? '确认永久删除' : '删除未启动任务'}</Button><Text style={{ color: confirmDelete ? c.statusDanger : c.foregroundMuted, fontSize: 10, lineHeight: 18, marginTop: 8 }}>{confirmDelete ? '再次点击将删除任务及其附件，此操作无法撤销。' : '仅从未启动过的任务可以直接删除。'}</Text></View>}
       <View style={{ marginTop: 24 }}><Button c={c} icon={card.hidden ? 'ArchiveRestore' : 'Archive'} disabled={busy} onPress={() => void save({ hidden: !card.hidden }).then(ok => { if (ok) close(); })}>{card.hidden ? '恢复到看板' : '从看板收起'}</Button><Text style={{ color: c.foregroundMuted, fontSize: 10, lineHeight: 18, marginTop: 8 }}>收起仅整理看板，会话继续保留在 Paseo 中。</Text></View>
     </ScrollView>
+    <Modal visible={Boolean(launchConflict)} transparent animationType="fade" onRequestClose={() => { if (!launching) setLaunchConflict(null); }}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <View accessibilityRole="alert" style={{ width: '100%', maxWidth: 430, backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 22 }}>
+          <View style={{ ...row, gap: 9, marginBottom: 10 }}><Icon name="CircleAlert" size={18} color={c.statusWarning} /><Text style={{ flex: 1, color: c.foreground, fontSize: 16, fontWeight: '600' }}>这个工作区已有任务在执行</Text></View>
+          <Text style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 19 }}>工作区“{launchConflict?.workspace.project} / {launchConflict?.workspace.name}”当前有 {launchConflict?.runningAgents.length ?? 0} 个任务正在执行：</Text>
+          <View style={{ marginVertical: 12, gap: 7 }}>{launchConflict?.runningAgents.map(agent => <Text key={agent.id} numberOfLines={2} style={{ color: c.foreground, fontSize: 12 }}>• {agent.title}</Text>)}</View>
+          <Text style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 19, marginBottom: 20 }}>同时执行可能修改相同文件。确定仍要开始当前任务吗？</Text>
+          <View style={{ ...row, justifyContent: 'flex-end', gap: 9 }}><Button c={c} disabled={launching} onPress={() => setLaunchConflict(null)}>取消</Button><Button c={c} primary disabled={launching} onPress={() => void startLaunch(launchConflict?.workspace.id)}>{launching ? '正在启动…' : '仍要开始'}</Button></View>
+        </View>
+      </View>
+    </Modal>
   </>;
 }
 

@@ -195,11 +195,53 @@ test('create is a draft; concurrent launch invokes provider exactly once', async
   const task = await service.create(input, mock.api); assert.equal(mock.creates, 0);
   assert.equal(task.modeId, 'full-access');
   assert.equal(task.thinkingOptionId, 'high');
-  const results = await Promise.all([service.launch(task.id, mock.api), service.launch(task.id, mock.api)]);
+  const results = await Promise.all([service.launch(task.id, mock.api, task.workspaceId), service.launch(task.id, mock.api, task.workspaceId)]);
+  assert.equal(results[0].status, 'started'); assert.equal(results[1].status, 'started');
+  if (results[0].status !== 'started' || results[1].status !== 'started') return;
   assert.equal(mock.creates, 1); assert.equal(results[0].agentId, results[1].agentId);
   assert.equal((await store.read()).tasks[task.id].agentId, results[0].agentId);
   assert.equal(mock.configs[0].modeId, 'full-access');
   assert.equal(mock.configs[0].thinkingOptionId, 'high');
+});
+test('launch requires confirmation when another agent is running in the same workspace', async t => {
+  const { service, store } = await setup(t); const mock = mockApi();
+  const task = await service.create(input, mock.api);
+  const warning = await service.launch(task.id, mock.api);
+  assert.equal(warning.status, 'confirmation_required');
+  if (warning.status !== 'confirmation_required') return;
+  assert.equal(warning.workspace.id, task.workspaceId);
+  assert.deepEqual(warning.runningAgents.map(agent => agent.id), ['session-01', 'session-02']);
+  assert.equal(mock.creates, 0);
+  assert.equal((await store.read()).tasks[task.id].launchState, undefined);
+
+  const result = await service.launch(task.id, mock.api, task.workspaceId);
+  assert.equal(result.status, 'started');
+  assert.equal(mock.creates, 1);
+});
+test('a workspace confirmation cannot authorize a launch after the draft moves elsewhere', async t => {
+  const { service } = await setup(t); const mock = mockApi();
+  const task = await service.create(input, mock.api);
+  const firstWarning = await service.launch(task.id, mock.api);
+  assert.equal(firstWarning.status, 'confirmation_required');
+  if (firstWarning.status !== 'confirmation_required') return;
+
+  await service.patch({ id: task.id, patch: { workspaceId: 'workspace-api' } }, mock.api);
+  const newlyRunning = mock.agents.find(agent => agent.id === 'session-03')!;
+  newlyRunning.status = 'running';
+  newlyRunning.activeTurn = { turnId: 'new-active-turn', startedAt: new Date().toISOString() };
+  const secondWarning = await service.launch(task.id, mock.api, firstWarning.workspace.id);
+  assert.equal(secondWarning.status, 'confirmation_required');
+  if (secondWarning.status !== 'confirmation_required') return;
+  assert.equal(secondWarning.workspace.id, 'workspace-api');
+  assert.deepEqual(secondWarning.runningAgents.map(agent => agent.id), ['session-03']);
+  assert.equal(mock.creates, 0);
+});
+test('launch starts immediately when running agents belong only to other workspaces', async t => {
+  const { service } = await setup(t); const mock = mockApi();
+  const task = await service.create({ ...input, workspaceId: 'workspace-design' }, mock.api);
+  const result = await service.launch(task.id, mock.api);
+  assert.equal(result.status, 'started');
+  assert.equal(mock.creates, 1);
 });
 test('Inbox capture is idempotent and conversion removes the entry only after task creation', async t => {
   const { service, store } = await setup(t); const mock = mockApi();
@@ -261,12 +303,12 @@ test('editing an Inbox idea updates only its title', async t => {
 test('launch keeps the title out of the prompt body', async t => {
   const { service } = await setup(t); const mock = mockApi();
   const task = await service.create(input, mock.api);
-  await service.launch(task.id, mock.api);
+  await service.launch(task.id, mock.api, task.workspaceId);
   assert.equal(mock.createOptions[0].title, input.title);
   assert.equal(mock.createOptions[0].prompt, input.description);
 
   const taskWithoutDescription = await service.create({ ...input, clientRequestId: '77777777-7777-4777-8777-777777777777', description: '' }, mock.api);
-  await service.launch(taskWithoutDescription.id, mock.api);
+  await service.launch(taskWithoutDescription.id, mock.api, taskWithoutDescription.workspaceId);
   assert.equal(mock.createOptions[1].title, input.title);
   assert.equal(mock.createOptions[1].prompt, '');
 });
@@ -287,7 +329,7 @@ test('attachments persist outside the board file and are forwarded on launch', a
   assert.equal(await readFile(task.attachments[0].path, 'utf8'), 'attachment contents');
   const boardFile = await readFile(service.store.file, 'utf8');
   assert(!boardFile.includes(contents.toString('base64')));
-  await service.launch(task.id, mock.api);
+  await service.launch(task.id, mock.api, task.workspaceId);
   assert.deepEqual(mock.createOptions[0].attachments, task.attachments);
 });
 test('a never-started task can change workspace and add pasted attachments', async t => {
@@ -302,7 +344,7 @@ test('a never-started task can change workspace and add pasted attachments', asy
   assert.equal(changed.workspaceId, 'workspace-api');
   assert.equal(changed.attachments.length, 1);
   assert.equal(await readFile(changed.attachments[0].path, 'utf8'), 'pasted image');
-  await service.launch(task.id, mock.api);
+  await service.launch(task.id, mock.api, changed.workspaceId);
   assert.equal(mock.agents.at(-1)?.workspaceId, 'workspace-api');
   assert.deepEqual(mock.createOptions[0].attachments, changed.attachments);
   await assert.rejects(() => service.patch({ id: task.id, patch: { workspaceId: 'workspace-design' } }, mock.api), /开始执行后不能修改/);
@@ -326,7 +368,7 @@ test('deleting a never-run task removes its stored attachments and launched task
   assert.equal((await store.read()).tasks[draft.id], undefined);
   await assert.rejects(() => readFile(path));
   const launched = await service.create(input, mock.api);
-  await service.launch(launched.id, mock.api);
+  await service.launch(launched.id, mock.api, launched.workspaceId);
   await assert.rejects(() => service.delete(launched.id), /从未执行过/);
 });
 test('board reads recover interrupted attachment deletes and remove orphan tombstones', async t => {
@@ -351,7 +393,7 @@ test('launch rejects attachment paths outside the task-owned directory', async t
   const outside = join(dirname(store.file), 'outside.txt');
   await writeFile(outside, contents);
   await store.update(data => { data.tasks[draft.id].attachments[0].path = outside; });
-  await assert.rejects(() => service.launch(draft.id, mock.api), /附件已丢失或不可读取/);
+  await assert.rejects(() => service.launch(draft.id, mock.api, draft.workspaceId), /附件已丢失或不可读取/);
   assert.equal((await store.read()).tasks[draft.id].launchState, undefined);
   assert.equal(mock.creates, 0);
 });
@@ -360,7 +402,7 @@ test('selected restrictive mode survives reload and is forwarded on launch', asy
   const task = await service.create({ ...input, modeId: 'auto' }, mock.api);
   const reloaded = new BoardService(new Store(store.file));
   assert.equal((await store.read()).tasks[task.id].modeId, 'auto');
-  await reloaded.launch(task.id, mock.api);
+  await reloaded.launch(task.id, mock.api, task.workspaceId);
   assert.equal(mock.configs[0].modeId, 'auto');
 });
 test('selected thinking mode survives reload and is forwarded on launch', async t => {
@@ -368,7 +410,7 @@ test('selected thinking mode survives reload and is forwarded on launch', async 
   const task = await service.create({ ...input, thinkingOptionId: 'low' }, mock.api);
   const reloaded = new BoardService(new Store(store.file));
   assert.equal((await store.read()).tasks[task.id].thinkingOptionId, 'low');
-  await reloaded.launch(task.id, mock.api);
+  await reloaded.launch(task.id, mock.api, task.workspaceId);
   assert.equal(mock.configs[0].thinkingOptionId, 'low');
 });
 test('invalid or unavailable thinking mode fails before any launch state is written', async t => {
@@ -377,7 +419,7 @@ test('invalid or unavailable thinking mode fails before any launch state is writ
   assert.equal(Object.keys((await store.read()).tasks).length, 0);
   const task = await service.create({ ...input, thinkingOptionId: 'low' }, mock.api);
   mock.api.providers.listModels = async () => ({ provider: 'codex', fetchedAt: '', requestId: '', models: [{ provider: 'codex', id: 'model', label: 'Model', thinkingOptions: [{ id: 'high', label: 'High' }] }] });
-  await assert.rejects(() => service.launch(task.id, mock.api), /Thinking Mode 已不可用/);
+  await assert.rejects(() => service.launch(task.id, mock.api, task.workspaceId), /Thinking Mode 已不可用/);
   assert.equal((await store.read()).tasks[task.id].launchState, undefined);
   assert.equal(mock.creates, 0);
 });
@@ -387,7 +429,7 @@ test('invalid or unavailable mode fails before any launch state is written', asy
   assert.equal(Object.keys((await store.read()).tasks).length, 0);
   const task = await service.create({ ...input, modeId: 'auto-review' }, mock.api);
   mock.api.providers.listModes = async () => ({ provider: 'codex', modes: [{ id: 'auto', label: 'Default' }], fetchedAt: '', requestId: '' });
-  await assert.rejects(() => service.launch(task.id, mock.api), /模式已不可用/);
+  await assert.rejects(() => service.launch(task.id, mock.api, task.workspaceId), /模式已不可用/);
   assert.equal((await store.read()).tasks[task.id].launchState, undefined);
   assert.equal(mock.creates, 0);
 });
@@ -401,19 +443,21 @@ test('legacy drafts without a mode migrate to Full Access before the first promp
   const { service, store } = await setup(t); const mock = mockApi();
   const task = taskSchema.parse({ ...input, id: 'task:legacy', createdAt: '', updatedAt: '' });
   await store.update(data => { data.tasks[task.id] = task; });
-  await service.launch(task.id, mock.api);
+  await service.launch(task.id, mock.api, task.workspaceId);
   assert.equal(mock.configs[0].modeId, 'full-access');
   assert.equal((await store.read()).tasks[task.id].modeId, 'full-access');
 });
 test('lost response is reconciled by task label without executing twice', async t => {
   const { service } = await setup(t); const mock = mockApi(); const task = await service.create(input, mock.api); mock.lose();
-  await assert.rejects(() => service.launch(task.id, mock.api), /启动未确认/);
-  const result = await service.launch(task.id, mock.api); assert.equal(result.agentId, 'created-1'); assert.equal(mock.creates, 1);
+  await assert.rejects(() => service.launch(task.id, mock.api, task.workspaceId), /启动未确认/);
+  const result = await service.launch(task.id, mock.api, task.workspaceId); assert.equal(result.status, 'started');
+  if (result.status !== 'started') return;
+  assert.equal(result.agentId, 'created-1'); assert.equal(mock.creates, 1);
 });
 test('ambiguous transport failure does not silently start a duplicate', async t => {
   const { service } = await setup(t); const mock = mockApi(); const task = await service.create(input, mock.api); mock.fail();
-  await assert.rejects(() => service.launch(task.id, mock.api), /启动未确认/);
-  await assert.rejects(() => service.launch(task.id, mock.api), /上次启动结果尚未确认/);
+  await assert.rejects(() => service.launch(task.id, mock.api, task.workspaceId), /启动未确认/);
+  await assert.rejects(() => service.launch(task.id, mock.api, task.workspaceId), /上次启动结果尚未确认/);
   assert.equal(mock.creates, 1);
 });
 test('partial metadata updates merge and moving active agents to done fails', async t => {

@@ -77,15 +77,20 @@ const api: BoardApi = {
   create: async input => { const existing = Object.values(data.store.tasks).find(task => task.createRequestId === input.clientRequestId); if (existing) return existing; const inboxEntry = input.inboxId ? data.store.inbox[input.inboxId] : undefined; if (input.inboxId && !inboxEntry) throw new Error('Inbox 条目已不存在，请刷新后重试。'); const now = new Date().toISOString(); const attachments = [...(inboxEntry?.attachments ?? []), ...(input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` }))]; const task = taskSchema.parse({ ...input, createRequestId: input.clientRequestId, attachments, id: `task:${crypto.randomUUID()}`, createdAt: now, updatedAt: now, stage: 'todo' }); data.store.tasks[task.id] = task; if (input.inboxId) delete data.store.inbox[input.inboxId]; persist(); return task; },
   patchInbox: async ({ id, expectedTitle, title }) => { const entry = data.store.inbox[id]; if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。'); if (entry.title !== expectedTitle) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。'); entry.title = title; persist(); return entry; },
   removeInbox: async ({ id }) => { if (!data.store.inbox[id]) throw new Error('Inbox 条目不存在，请刷新后重试。'); delete data.store.inbox[id]; persist(); },
-  launch: async ({ id }) => {
+  launch: async ({ id, confirmedWorkspaceId }) => {
     if (location.search.includes('launch-error')) throw new Error('Agent 启动失败，请稍后重试。');
-    const task = data.store.tasks[id]; if (task.agentId) return { agentId: task.agentId };
+    const task = data.store.tasks[id]; if (task.agentId) return { status: 'started', agentId: task.agentId };
+    const runningAgents = data.agents.filter(agent => agent.workspaceId === task.workspaceId && agentIsRunning(agent)).map(agent => ({ id: agent.id, title: agent.title }));
+    if (runningAgents.length && confirmedWorkspaceId !== task.workspaceId) {
+      const workspace = data.workspaces.find(item => item.id === task.workspaceId)!;
+      return { status: 'confirmation_required', workspace: { id: workspace.id, name: workspace.name, project: workspace.project }, runningAgents };
+    }
     task.modeId ??= defaultModeId(data.modes.filter(mode => mode.provider === task.provider.split('/')[0]), task.provider.split('/')[0]);
     const model = data.models.find(model => model.id === task.provider);
     task.thinkingOptionId ??= defaultThinkingOptionId(model?.thinkingOptions ?? [], model?.defaultThinkingOptionId);
     const agentId = crypto.randomUUID(); const now = new Date().toISOString();
     data.agents.push({ id: agentId, title: task.title, provider: task.provider.split('/')[0], workspaceId: task.workspaceId, cwd: '', status: 'running', activeTurn: true, createdAt: now, updatedAt: now, lastUserMessageAt: now, attentionReason: null, pendingPermission: false, archived: false, labels: {} });
-    task.agentId = agentId; task.stage = undefined; persist(); return { agentId };
+    task.agentId = agentId; task.stage = undefined; persist(); return { status: 'started', agentId };
   },
   remove: async ({ id }) => { const task = data.store.tasks[id]; if (!task) throw new Error('任务不存在。'); if (task.agentId || task.launchState) throw new Error('只有从未执行过的任务可以删除。'); delete data.store.tasks[id]; persist(); },
 };

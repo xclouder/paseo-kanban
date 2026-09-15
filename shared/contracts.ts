@@ -54,7 +54,16 @@ export const addInboxEntry = defineRpc({ name: 'board.inbox.add', input: addInbo
 export const patchInboxInput = z.object({ id: z.string().uuid(), expectedTitle: z.string().trim().min(1).max(180), title: z.string().trim().min(1).max(180) });
 export const patchInboxEntry = defineRpc({ name: 'board.inbox.patch', input: patchInboxInput, output: inboxEntrySchema });
 export const deleteInboxEntry = defineRpc({ name: 'board.inbox.delete', input: z.object({ id: z.string().uuid() }), output: z.object({ ok: z.boolean() }) });
-export const launchTask = defineRpc({ name: 'board.launch', input: z.object({ id: z.string().min(1) }), output: z.object({ agentId: z.string() }) });
+export const launchInput = z.object({ id: z.string().min(1), confirmedWorkspaceId: z.string().min(1).optional() });
+export const launchResult = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('confirmation_required'),
+    workspace: z.object({ id: z.string(), name: z.string(), project: z.string() }),
+    runningAgents: z.array(z.object({ id: z.string(), title: z.string() })).min(1),
+  }),
+  z.object({ status: z.literal('started'), agentId: z.string() }),
+]);
+export const launchTask = defineRpc({ name: 'board.launch', input: launchInput, output: launchResult });
 export const deleteTask = defineRpc({ name: 'board.delete', input: z.object({ id: z.string().min(1) }), output: z.object({ ok: z.boolean() }) });
 export type PatchInput = z.infer<typeof patchInput>;
 export type MoveInput = z.infer<typeof moveInput>;
@@ -65,3 +74,5 @@ export type CreateProjectWorkspaceInput = z.infer<typeof createProjectWorkspaceI
 export type AddInboxInput = z.input<typeof addInboxInput>;
 export type PatchInboxInput = z.infer<typeof patchInboxInput>;
 export type CreateAttachmentInput = z.infer<typeof createAttachmentInput>;
+export type LaunchInput = z.infer<typeof launchInput>;
+export type LaunchResult = z.infer<typeof launchResult>;
