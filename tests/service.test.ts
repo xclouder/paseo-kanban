@@ -241,6 +241,21 @@ test('deleting an Inbox idea removes its stored attachments', async t => {
   assert.equal((await store.read()).inbox[entry.id], undefined);
   await assert.rejects(() => access(path));
 });
+test('editing an Inbox idea updates only its title', async t => {
+  const { service, store } = await setup(t);
+  const contents = Buffer.from('keep this attachment');
+  const entry = await service.addInbox({
+    clientRequestId: '58585858-5858-4858-8858-585858585858',
+    title: 'Original idea',
+    attachments: [{ id: '59595959-5959-4959-8959-595959595959', fileName: 'keep.txt', mimeType: 'text/plain', size: contents.byteLength, dataBase64: contents.toString('base64') }],
+  });
+  const changed = await service.patchInbox({ id: entry.id, title: 'Updated idea' });
+  assert.equal(changed.title, 'Updated idea');
+  assert.deepEqual(changed.attachments, entry.attachments);
+  assert.equal((await store.read()).inbox[entry.id].title, 'Updated idea');
+  assert.equal(await readFile(entry.attachments[0].path, 'utf8'), 'keep this attachment');
+  await assert.rejects(() => service.patchInbox({ id: '60606060-6060-4060-8060-606060606060', title: 'Missing' }), /Inbox 条目不存在/);
+});
 test('launch keeps the title out of the prompt body', async t => {
   const { service } = await setup(t); const mock = mockApi();
   const task = await service.create(input, mock.api);

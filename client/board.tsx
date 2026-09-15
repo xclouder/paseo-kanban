@@ -5,7 +5,7 @@ import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/pl
 import { useRpc } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInput } from '../shared/contracts';
+import { completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, patchInboxEntry, readBoard, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
 import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, filterCards, priorityNames, relativeTime, stageNames, stages, type Card, type InboxEntry, type Snapshot, type Stage, type Task, type TaskAttachment, type Workspace } from '../shared/model';
 import { organizeProjects } from '../shared/contracts';
 import type { ProjectAction } from '../shared/projects';
@@ -21,6 +21,7 @@ export interface BoardApi {
   completeReview(input: CompleteReviewInput): Promise<{ ok: boolean; count: number }>;
   create(input: CreateInput): Promise<Task>;
   createProject(input: CreateProjectWorkspaceInput): Promise<Workspace>;
+  patchInbox(input: PatchInboxInput): Promise<InboxEntry>;
   removeInbox(input: { id: string }): Promise<unknown>;
   launch(input: { id: string }): Promise<{ agentId: string }>;
   remove(input: { id: string }): Promise<unknown>;
@@ -34,8 +35,8 @@ export function KanbanWorkspace(props: PluginWorkspacePanelProps) {
 }
 function ConnectedBoard(props: PluginSurfaceProps & { workspaceId?: string }) {
   const organize = useRpc(organizeProjects), createProject = useRpc(createProjectWorkspace);
-  const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), create = useRpc(createTask), removeInbox = useRpc(deleteInboxEntry), launch = useRpc(launchTask), remove = useRpc(deleteTask);
-  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, create, createProject, removeInbox, launch, remove, organize }), [read, patch, move, completeReview, create, createProject, removeInbox, launch, remove, organize]);
+  const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), create = useRpc(createTask), patchInbox = useRpc(patchInboxEntry), removeInbox = useRpc(deleteInboxEntry), launch = useRpc(launchTask), remove = useRpc(deleteTask);
+  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, create, createProject, patchInbox, removeInbox, launch, remove, organize }), [read, patch, move, completeReview, create, createProject, patchInbox, removeInbox, launch, remove, organize]);
   return <BoardView {...props} api={api} />;
 }
 
@@ -470,7 +471,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
           <Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text>
           <Button c={c} small onPress={() => notice.retry ? void board.refetch() : setMessage(null)}>{notice.retry ? '重试' : '关闭'}</Button>
         </View>}
-        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} busy={busy} createTask={entry => openCreate(entry)} remove={id => run(() => api.removeInbox({ id }), 'Inbox 条目已删除')} /> : <View style={{ flex: 1, minHeight: 0 }}>
+        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} busy={busy} createTask={entry => openCreate(entry)} edit={(id, title) => run(() => api.patchInbox({ id, title }), 'Inbox 条目已更新')} remove={id => run(() => api.removeInbox({ id }), 'Inbox 条目已删除')} /> : <View style={{ flex: 1, minHeight: 0 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {visible.length === 0 && <View style={{ padding: 16, ...row, gap: 12 }}><Icon name="Search" size={17} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 12, flex: 1 }}>{all.length ? '没有符合条件的任务。试试清除筛选，或查看已收起任务。' : '还没有会话。新建一个任务，或在 Paseo 中打开会话后刷新。'}</Text>{all.length > 0 && <Button c={c} small onPress={reset}>清除筛选</Button>}</View>}
             <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: layout.compact ? 12 : 24, gap: 15, flexGrow: 1 }} showsHorizontalScrollIndicator>
@@ -516,9 +517,18 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   </View>;
 }
 
-function InboxPanel({ c, entries, busy, createTask, remove }: { c: Colors; entries: InboxEntry[]; busy: boolean; createTask(entry: InboxEntry): void; remove(id: string): Promise<boolean> }) {
+function InboxPanel({ c, entries, busy, createTask, edit, remove }: { c: Colors; entries: InboxEntry[]; busy: boolean; createTask(entry: InboxEntry): void; edit(id: string, title: string): Promise<boolean>; remove(id: string): Promise<boolean> }) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
   const sorted = [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+  const beginEdit = (entry: InboxEntry) => { setConfirmDelete(null); setEditing(entry.id); setEditTitle(entry.title); };
+  const cancelEdit = () => { setEditing(null); setEditTitle(''); };
+  const saveEdit = (entry: InboxEntry) => {
+    const title = editTitle.trim();
+    if (!title || title.length > 180 || title === entry.title) { if (title === entry.title) cancelEdit(); return; }
+    void edit(entry.id, title).then(ok => { if (ok) cancelEdit(); });
+  };
   return <ScrollView testID="inbox-panel" style={{ flex: 1 }} contentContainerStyle={{ width: '100%', maxWidth: 820, alignSelf: 'center', padding: 24, gap: 10 }}>
     {!sorted.length ? <View style={{ minHeight: 240, alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: c.border, borderRadius: 12 }}>
       <Icon name="Inbox" size={28} color={c.foregroundMuted} />
@@ -526,9 +536,9 @@ function InboxPanel({ c, entries, busy, createTask, remove }: { c: Colors; entri
       <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>在 Paseo 任意位置按 Ctrl+Shift+I 快速记下一项。</Text>
     </View> : sorted.map(entry => <View key={entry.id} testID={`inbox-entry-${entry.id}`} style={{ ...row, gap: 14, padding: 15, borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.surface1 }}>
       <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>
-      <View style={{ flex: 1, minWidth: 0 }}><Text style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View>
-      <Button c={c} small primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button>
-      <Button c={c} small icon="Trash2" disabled={busy} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
+      <View style={{ flex: 1, minWidth: 0 }}>{editing === entry.id ? <TextInput accessibilityLabel={`编辑 Inbox 条目 ${entry.title}`} autoFocus value={editTitle} editable={!busy} maxLength={180} onChangeText={setEditTitle} onSubmitEditing={() => saveEdit(entry)} style={{ color: c.foreground, borderColor: c.accent, backgroundColor: c.surface0, borderWidth: 1, borderRadius: 7, fontSize: 12, paddingHorizontal: 10, minHeight: 36 }} /> : <Text style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text>}<Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View>
+      {editing === entry.id ? <><Button c={c} small primary icon="Check" disabled={busy || !editTitle.trim() || editTitle.trim().length > 180} onPress={() => saveEdit(entry)}>保存</Button><Button c={c} small disabled={busy} onPress={cancelEdit}>取消</Button></> : <><Button c={c} small icon="Pencil" disabled={busy} label={`编辑 Inbox 条目 ${entry.title}`} onPress={() => beginEdit(entry)}>编辑</Button><Button c={c} small primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button></>}
+      <Button c={c} small icon="Trash2" disabled={busy || editing === entry.id} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
         if (confirmDelete !== entry.id) { setConfirmDelete(entry.id); return; }
         void remove(entry.id).then(ok => { if (ok) setConfirmDelete(null); });
       }}>{confirmDelete === entry.id ? '确认删除' : undefined}</Button>

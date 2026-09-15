@@ -64,6 +64,21 @@ test('the task-board shortcut leaves the Inbox view', async ({ page }) => {
   await expect(page.getByRole('button', { name: '新建任务', exact: true })).toBeVisible();
 });
 
+test('edit an Inbox entry before creating its task', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  const entry = page.getByTestId('inbox-entry-11111111-1111-4111-8111-111111111111');
+  await entry.getByRole('button', { name: '编辑 Inbox 条目 整理下周迭代要处理的体验问题', exact: true }).click();
+  const title = entry.getByLabel('编辑 Inbox 条目 整理下周迭代要处理的体验问题', { exact: true });
+  await title.fill('整理本周 Inbox 体验问题');
+  await entry.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(entry).toContainText('整理本周 Inbox 体验问题');
+
+  await entry.getByRole('button', { name: '创建任务', exact: true }).click();
+  await expect(page.getByLabel('任务标题', { exact: true })).toHaveValue('整理本周 Inbox 体验问题');
+  await expect(page.getByLabel('任务说明', { exact: true })).toHaveValue('整理本周 Inbox 体验问题');
+});
+
 test('global Inbox follows the Paseo light theme', async ({ page }) => {
   await page.goto('/?light');
   const boardSurface = await page.getByTestId('card-task:preview-01').evaluate(element => getComputedStyle(element).backgroundColor);

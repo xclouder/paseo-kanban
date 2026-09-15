@@ -1,5 +1,5 @@
 import type { PaseoApi, PaseoAgent, PaseoWorkspace } from '@getpaseo/client';
-import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInput } from '../shared/contracts';
+import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
 import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, inboxEntrySchema, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment, type Workspace } from '../shared/model';
 import { Store } from './store';
 import { applyProjectAction, type ProjectAction } from '../shared/projects';
@@ -389,6 +389,14 @@ export class BoardService {
       }
       if (moved) await rm(trash, { recursive: true, force: true }).catch(() => undefined);
       return { ok: true };
+    });
+  }
+  async patchInbox(input: PatchInboxInput) {
+    return this.store.update(data => {
+      const entry = data.inbox[input.id];
+      if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。');
+      entry.title = input.title;
+      return entry;
     });
   }
   async create(input: CreateInput, paseo: PaseoApi) {

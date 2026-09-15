@@ -66,6 +66,7 @@ const api: BoardApi = {
     return { ok: true, count: targets.length };
   },
   create: async input => { const existing = Object.values(data.store.tasks).find(task => task.createRequestId === input.clientRequestId); if (existing) return existing; const inboxEntry = input.inboxId ? data.store.inbox[input.inboxId] : undefined; if (input.inboxId && !inboxEntry) throw new Error('Inbox 条目已不存在，请刷新后重试。'); const now = new Date().toISOString(); const attachments = [...(inboxEntry?.attachments ?? []), ...(input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` }))]; const task = taskSchema.parse({ ...input, createRequestId: input.clientRequestId, attachments, id: `task:${crypto.randomUUID()}`, createdAt: now, updatedAt: now, stage: 'todo' }); data.store.tasks[task.id] = task; if (input.inboxId) delete data.store.inbox[input.inboxId]; persist(); return task; },
+  patchInbox: async ({ id, title }) => { const entry = data.store.inbox[id]; if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。'); entry.title = title; persist(); return entry; },
   removeInbox: async ({ id }) => { if (!data.store.inbox[id]) throw new Error('Inbox 条目不存在，请刷新后重试。'); delete data.store.inbox[id]; persist(); },
   launch: async ({ id }) => {
     if (location.search.includes('launch-error')) throw new Error('Agent 启动失败，请稍后重试。');

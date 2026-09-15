@@ -49,6 +49,8 @@ export const addInboxInput = z.object({
   attachments: z.array(createAttachmentInput).max(MAX_ATTACHMENT_FILES).default([]),
 });
 export const addInboxEntry = defineRpc({ name: 'board.inbox.add', input: addInboxInput, output: inboxEntrySchema });
+export const patchInboxInput = z.object({ id: z.string().uuid(), title: z.string().trim().min(1).max(180) });
+export const patchInboxEntry = defineRpc({ name: 'board.inbox.patch', input: patchInboxInput, output: inboxEntrySchema });
 export const deleteInboxEntry = defineRpc({ name: 'board.inbox.delete', input: z.object({ id: z.string().uuid() }), output: z.object({ ok: z.boolean() }) });
 export const launchTask = defineRpc({ name: 'board.launch', input: z.object({ id: z.string().min(1) }), output: z.object({ agentId: z.string() }) });
 export const deleteTask = defineRpc({ name: 'board.delete', input: z.object({ id: z.string().min(1) }), output: z.object({ ok: z.boolean() }) });
@@ -58,4 +60,5 @@ export type CompleteReviewInput = z.infer<typeof completeReviewInput>;
 export type CreateInput = z.input<typeof createInput>;
 export type CreateProjectWorkspaceInput = z.infer<typeof createProjectWorkspaceInput>;
 export type AddInboxInput = z.input<typeof addInboxInput>;
+export type PatchInboxInput = z.infer<typeof patchInboxInput>;
 export type CreateAttachmentInput = z.infer<typeof createAttachmentInput>;
