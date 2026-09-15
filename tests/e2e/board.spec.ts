@@ -65,14 +65,25 @@ test('the task-board shortcut leaves the Inbox view', async ({ page }) => {
 });
 
 test('edit an Inbox entry before creating its task', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  await expect(page.getByTestId('board-sidebar')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
   const entry = page.getByTestId('inbox-entry-11111111-1111-4111-8111-111111111111');
   await entry.getByRole('button', { name: '编辑 Inbox 条目 整理下周迭代要处理的体验问题', exact: true }).click();
-  const title = entry.getByLabel('编辑 Inbox 条目 整理下周迭代要处理的体验问题', { exact: true });
+  let title = entry.getByRole('textbox', { name: '编辑 Inbox 条目 整理下周迭代要处理的体验问题', exact: true });
+  expect((await title.boundingBox())!.width).toBeGreaterThan(200);
+  await title.fill('不保存的临时标题');
+  await entry.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(title).toHaveCount(0);
+  await expect(entry).toContainText('整理下周迭代要处理的体验问题');
+
+  await entry.getByRole('button', { name: '编辑 Inbox 条目 整理下周迭代要处理的体验问题', exact: true }).click();
+  title = entry.getByRole('textbox', { name: '编辑 Inbox 条目 整理下周迭代要处理的体验问题', exact: true });
   await title.fill('整理本周 Inbox 体验问题');
   await entry.getByRole('button', { name: '保存', exact: true }).click();
   await expect(entry).toContainText('整理本周 Inbox 体验问题');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   await entry.getByRole('button', { name: '创建任务', exact: true }).click();
   await expect(page.getByLabel('任务标题', { exact: true })).toHaveValue('整理本周 Inbox 体验问题');

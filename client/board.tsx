@@ -471,7 +471,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
           <Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text>
           <Button c={c} small onPress={() => notice.retry ? void board.refetch() : setMessage(null)}>{notice.retry ? '重试' : '关闭'}</Button>
         </View>}
-        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} busy={busy} createTask={entry => openCreate(entry)} edit={(id, title) => run(() => api.patchInbox({ id, title }), 'Inbox 条目已更新')} remove={id => run(() => api.removeInbox({ id }), 'Inbox 条目已删除')} /> : <View style={{ flex: 1, minHeight: 0 }}>
+        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} compact={layout.compact} busy={busy} createTask={entry => openCreate(entry)} edit={(id, expectedTitle, title) => run(() => api.patchInbox({ id, expectedTitle, title }), 'Inbox 条目已更新')} remove={id => run(() => api.removeInbox({ id }), 'Inbox 条目已删除')} /> : <View style={{ flex: 1, minHeight: 0 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {visible.length === 0 && <View style={{ padding: 16, ...row, gap: 12 }}><Icon name="Search" size={17} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 12, flex: 1 }}>{all.length ? '没有符合条件的任务。试试清除筛选，或查看已收起任务。' : '还没有会话。新建一个任务，或在 Paseo 中打开会话后刷新。'}</Text>{all.length > 0 && <Button c={c} small onPress={reset}>清除筛选</Button>}</View>}
             <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: layout.compact ? 12 : 24, gap: 15, flexGrow: 1 }} showsHorizontalScrollIndicator>
@@ -517,33 +517,37 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   </View>;
 }
 
-function InboxPanel({ c, entries, busy, createTask, edit, remove }: { c: Colors; entries: InboxEntry[]; busy: boolean; createTask(entry: InboxEntry): void; edit(id: string, title: string): Promise<boolean>; remove(id: string): Promise<boolean> }) {
+function InboxPanel({ c, entries, compact, busy, createTask, edit, remove }: { c: Colors; entries: InboxEntry[]; compact: boolean; busy: boolean; createTask(entry: InboxEntry): void; edit(id: string, expectedTitle: string, title: string): Promise<boolean>; remove(id: string): Promise<boolean> }) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [editOriginalTitle, setEditOriginalTitle] = useState('');
   const sorted = [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
-  const beginEdit = (entry: InboxEntry) => { setConfirmDelete(null); setEditing(entry.id); setEditTitle(entry.title); };
-  const cancelEdit = () => { setEditing(null); setEditTitle(''); };
+  const beginEdit = (entry: InboxEntry) => { setConfirmDelete(null); setEditing(entry.id); setEditTitle(entry.title); setEditOriginalTitle(entry.title); };
+  const cancelEdit = () => { setEditing(null); setEditTitle(''); setEditOriginalTitle(''); };
   const saveEdit = (entry: InboxEntry) => {
     const title = editTitle.trim();
-    if (!title || title.length > 180 || title === entry.title) { if (title === entry.title) cancelEdit(); return; }
-    void edit(entry.id, title).then(ok => { if (ok) cancelEdit(); });
+    if (!title || title.length > 180 || title === editOriginalTitle) { if (title === editOriginalTitle) cancelEdit(); return; }
+    void edit(entry.id, editOriginalTitle, title).then(ok => { if (ok) cancelEdit(); });
   };
   return <ScrollView testID="inbox-panel" style={{ flex: 1 }} contentContainerStyle={{ width: '100%', maxWidth: 820, alignSelf: 'center', padding: 24, gap: 10 }}>
     {!sorted.length ? <View style={{ minHeight: 240, alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: c.border, borderRadius: 12 }}>
       <Icon name="Inbox" size={28} color={c.foregroundMuted} />
       <Text style={{ color: c.foreground, fontSize: 14, fontWeight: '600' }}>Inbox 还是空的</Text>
       <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>在 Paseo 任意位置按 Ctrl+Shift+I 快速记下一项。</Text>
-    </View> : sorted.map(entry => <View key={entry.id} testID={`inbox-entry-${entry.id}`} style={{ ...row, gap: 14, padding: 15, borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.surface1 }}>
-      <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>
-      <View style={{ flex: 1, minWidth: 0 }}>{editing === entry.id ? <TextInput accessibilityLabel={`编辑 Inbox 条目 ${entry.title}`} autoFocus value={editTitle} editable={!busy} maxLength={180} onChangeText={setEditTitle} onSubmitEditing={() => saveEdit(entry)} style={{ color: c.foreground, borderColor: c.accent, backgroundColor: c.surface0, borderWidth: 1, borderRadius: 7, fontSize: 12, paddingHorizontal: 10, minHeight: 36 }} /> : <Text style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text>}<Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View>
-      {editing === entry.id ? <><Button c={c} small primary icon="Check" disabled={busy || !editTitle.trim() || editTitle.trim().length > 180} onPress={() => saveEdit(entry)}>保存</Button><Button c={c} small disabled={busy} onPress={cancelEdit}>取消</Button></> : <><Button c={c} small icon="Pencil" disabled={busy} label={`编辑 Inbox 条目 ${entry.title}`} onPress={() => beginEdit(entry)}>编辑</Button><Button c={c} small primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button></>}
-      <Button c={c} small icon="Trash2" disabled={busy || editing === entry.id} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
+    </View> : sorted.map(entry => <View key={entry.id} testID={`inbox-entry-${entry.id}`} style={{ flexDirection: compact ? 'column' : 'row', alignItems: compact ? 'stretch' : 'center', gap: compact ? 10 : 14, padding: 15, borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.surface1 }}>
+      <View style={{ ...row, flex: 1, minWidth: 0, gap: 14 }}>{(!compact || editing !== entry.id) && <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>}
+      <View style={{ flex: 1, minWidth: 0 }}>{editing === entry.id ? <InboxEntryEditor c={c} label={`编辑 Inbox 条目 ${editOriginalTitle}`} value={editTitle} disabled={busy} onChange={setEditTitle} onSubmit={() => saveEdit(entry)} /> : <Text style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text>}<Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View></View>
+      <View style={{ ...row, justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>{editing === entry.id ? <><Button c={c} small primary icon="Check" disabled={busy || !editTitle.trim() || editTitle.trim().length > 180} onPress={() => saveEdit(entry)}>保存</Button><Button c={c} small disabled={busy} onPress={cancelEdit}>取消</Button></> : <><Button c={c} small icon="Pencil" disabled={busy} label={`编辑 Inbox 条目 ${entry.title}`} onPress={() => beginEdit(entry)}>编辑</Button><Button c={c} small primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button><Button c={c} small icon="Trash2" disabled={busy} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
         if (confirmDelete !== entry.id) { setConfirmDelete(entry.id); return; }
         void remove(entry.id).then(ok => { if (ok) setConfirmDelete(null); });
-      }}>{confirmDelete === entry.id ? '确认删除' : undefined}</Button>
+      }}>{confirmDelete === entry.id ? '确认删除' : undefined}</Button></>}</View>
     </View>)}
   </ScrollView>;
+}
+
+function InboxEntryEditor({ c, label, value, disabled, onChange, onSubmit }: { c: Colors; label: string; value: string; disabled: boolean; onChange(value: string): void; onSubmit(): void }) {
+  return <TextInput accessibilityLabel={label} autoFocus value={value} editable={!disabled} maxLength={180} onChangeText={onChange} onSubmitEditing={onSubmit} style={{ width: '100%', color: c.foreground, borderColor: c.accent, backgroundColor: c.surface0, borderWidth: 1, borderRadius: 7, fontSize: 12, paddingHorizontal: 10, minHeight: 36 }} />;
 }
 
 function TaskCard({ card, c, selected, busy, onSelect, onPin }: { card: Card; c: Colors; selected: boolean; busy: boolean; onSelect(): void; onPin(): void }) {

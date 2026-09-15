@@ -395,6 +395,7 @@ export class BoardService {
     return this.store.update(data => {
       const entry = data.inbox[input.id];
       if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。');
+      if (entry.title !== input.expectedTitle) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。');
       entry.title = input.title;
       return entry;
     });
