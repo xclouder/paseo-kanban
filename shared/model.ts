@@ -30,6 +30,7 @@ export const taskSchema = metadataSchema.extend({
   id: z.string(), title: z.string().trim().min(1).max(180),
   workspaceId: z.string().min(1), provider: z.string().trim().min(1).max(200),
   modeId: z.string().trim().min(1).max(200).optional(),
+  thinkingOptionId: z.string().trim().min(1).max(200).optional(),
   createRequestId: z.string().uuid().optional(),
   createdAt: z.string(), updatedAt: z.string(), agentId: z.string().optional(),
   launchState: z.enum(['starting', 'started', 'uncertain']).optional(),
@@ -47,6 +48,7 @@ export const emptyStore = (): BoardStore => storeSchema.parse({ version: 1, sess
 export const agentSchema = z.object({
   id: z.string(), workspaceId: z.string().nullable(), title: z.string(),
   provider: z.string(), cwd: z.string(), status: z.string(),
+  activeTurn: z.boolean().default(false),
   updatedAt: z.string(), createdAt: z.string(), lastUserMessageAt: z.string().nullable(),
   attentionReason: z.string().nullable(), pendingPermission: z.boolean(),
   archived: z.boolean(), labels: z.record(z.string(), z.string()),
@@ -56,13 +58,22 @@ export const workspaceSchema = z.object({ id: z.string(), name: z.string(), proj
 export type Workspace = z.infer<typeof workspaceSchema>;
 export const runModeSchema = z.object({ id: z.string(), label: z.string(), provider: z.string(), description: z.string().optional() });
 export type RunMode = z.infer<typeof runModeSchema>;
+export const thinkingOptionSchema = z.object({ id: z.string(), label: z.string(), description: z.string().optional(), isDefault: z.boolean().optional() });
+export type ThinkingOption = z.infer<typeof thinkingOptionSchema>;
+export function defaultThinkingOptionId(options: readonly Pick<ThinkingOption, 'id' | 'label' | 'isDefault'>[], providerDefault?: string): string | undefined {
+  const normalize = (value: string) => value.toLowerCase().replace(/[\s_-]/g, '');
+  return options.find(option => normalize(option.id) === 'high' || normalize(option.label) === 'high')?.id
+    ?? options.find(option => option.id === providerDefault)?.id
+    ?? options.find(option => option.isDefault)?.id
+    ?? options[0]?.id;
+}
 export function defaultModeId(modes: readonly Pick<RunMode, 'id' | 'label'>[], provider?: string): string | undefined {
   const normalize = (value: string) => value.toLowerCase().replace(/[\s_-]/g, '');
   return modes.find(mode => normalize(mode.id) === 'fullaccess' || normalize(mode.label) === 'fullaccess' || (provider === 'claude' && mode.id === 'bypassPermissions'))?.id ?? modes[0]?.id;
 }
 export const snapshotSchema = z.object({
   store: storeSchema, agents: z.array(agentSchema), workspaces: z.array(workspaceSchema),
-  providers: z.array(z.string()), models: z.array(z.object({ id: z.string(), label: z.string(), provider: z.string() })), providerError: z.string().optional(), fetchedAt: z.string(),
+  providers: z.array(z.string()), models: z.array(z.object({ id: z.string(), label: z.string(), provider: z.string(), thinkingOptions: z.array(thinkingOptionSchema).default([]), defaultThinkingOptionId: z.string().optional() })), providerError: z.string().optional(), fetchedAt: z.string(),
   modes: z.array(runModeSchema).default([]),
 });
 export type Snapshot = z.infer<typeof snapshotSchema>;
@@ -72,9 +83,13 @@ export type Card = Metadata & {
   provider: string; updatedAt: string; agent?: Agent; task?: Task;
 };
 
+export function agentIsRunning(agent: Agent): boolean {
+  return agent.activeTurn || agent.status === 'running' || agent.status === 'initializing';
+}
+
 export function automaticStage(agent: Agent): Stage {
   if (agent.pendingPermission || agent.attentionReason === 'permission' || agent.status === 'error') return 'blocked';
-  if (agent.status === 'running' || agent.status === 'initializing') return 'running';
+  if (agentIsRunning(agent)) return 'running';
   return 'review';
 }
 

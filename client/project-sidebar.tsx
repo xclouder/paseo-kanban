@@ -1,4 +1,5 @@
-import { createElement, useState, type ReactNode } from 'react';
+import { createElement, useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import type { PluginTheme } from '@getpaseo/plugin';
@@ -8,20 +9,26 @@ type Colors = PluginTheme['colors'];
 const row = { flexDirection: 'row', alignItems: 'center' } as const;
 const projectMime = 'application/x-paseo-sidebar-project';
 const groupMime = 'application/x-paseo-sidebar-group';
+type MenuAnchor = { x: number; y: number };
 
 function Control({ c, label, icon, disabled, onPress }: { c: Colors; label: string; icon: string; disabled?: boolean; onPress(): void }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={{ padding: 6, opacity: disabled ? 0.3 : 1 }}><Icon name={icon} size={13} color={c.foregroundMuted} /></Pressable>;
 }
 
-function SortTarget({ web, disabled, c, drag, onProject, onGroup, children }: {
+function SortTarget({ web, disabled, c, drag, onProject, onGroup, onContextMenu, children }: {
   web: boolean; disabled: boolean; c: Colors; drag?: { kind: 'project' | 'group'; id: string };
-  onProject?(id: string): void; onGroup?(id: string): void; children: ReactNode;
+  onProject?(id: string): void; onGroup?(id: string): void; onContextMenu?(anchor: MenuAnchor): void; children: ReactNode;
 }) {
   const [over, setOver] = useState<'insert' | 'group' | null>(null);
   if (!web) return <View>{children}</View>;
   return createElement('div', {
     draggable: Boolean(drag && !disabled),
     style: { borderRadius: 6, boxShadow: over === 'group' ? `inset 0 0 0 2px ${c.accent}` : over === 'insert' ? `inset 0 2px ${c.accent}` : undefined },
+    onContextMenu: (event: React.MouseEvent) => {
+      if (!onContextMenu || disabled) return;
+      event.preventDefault();
+      onContextMenu({ x: event.clientX, y: event.clientY });
+    },
     onDragStart: (event: React.DragEvent) => {
       if (!drag || disabled) return;
       event.stopPropagation();
@@ -47,6 +54,50 @@ function SortTarget({ web, disabled, c, drag, onProject, onGroup, children }: {
   }, children);
 }
 
+function ProjectContextMenu({ c, anchor, project, groupId, groups, busy, close, move }: {
+  c: Colors; anchor: MenuAnchor; project: SidebarProject; groupId: string | null; groups: ProjectLayout['groups']; busy: boolean;
+  close(): void; move(groupId: string | null): void;
+}) {
+  const [submenu, setSubmenu] = useState(false);
+  useEffect(() => {
+    const dismiss = () => close();
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+    document.addEventListener('mousedown', dismiss);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', dismiss);
+    window.addEventListener('scroll', dismiss, true);
+    return () => {
+      document.removeEventListener('mousedown', dismiss);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', dismiss);
+      window.removeEventListener('scroll', dismiss, true);
+    };
+  }, [close]);
+  const menuWidth = 176;
+  const left = Math.max(8, Math.min(anchor.x, window.innerWidth - menuWidth - 8));
+  const top = Math.max(8, Math.min(anchor.y, window.innerHeight - 118));
+  const openLeft = left + menuWidth * 2 > window.innerWidth - 8;
+  const shell = { position: 'fixed', minWidth: 160, padding: 5, border: `1px solid ${c.border}`, borderRadius: 8, background: c.surface1, boxShadow: '0 8px 24px rgba(0,0,0,.28)', zIndex: 10000 } as const;
+  const item = { display: 'flex', width: '100%', maxWidth: 230, alignItems: 'center', justifyContent: 'space-between', gap: 18, border: 0, borderRadius: 5, padding: '8px 10px', color: c.foreground, background: 'transparent', fontSize: 12, textAlign: 'left', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } as const;
+  const menuItem = (label: string, onClick: () => void, disabled = false) => createElement('button', {
+    type: 'button', disabled, 'aria-label': label,
+    style: { ...item, opacity: disabled ? 0.45 : 1 },
+    onMouseDown: (event: React.MouseEvent) => event.stopPropagation(),
+    onClick,
+  }, label);
+  return createPortal(createElement('div', {
+    role: 'dialog', 'aria-label': `${project.name} 项目菜单`,
+    style: { ...shell, left, top },
+    onMouseDown: (event: React.MouseEvent) => event.stopPropagation(),
+  },
+  createElement('div', { style: { position: 'relative' }, onMouseEnter: () => setSubmenu(true), onMouseLeave: () => setSubmenu(false) },
+    createElement('button', { type: 'button', autoFocus: true, 'aria-haspopup': 'true', 'aria-expanded': submenu, style: item, onClick: () => setSubmenu(value => !value) },
+      createElement('span', null, '移动到分组'), createElement('span', { 'aria-hidden': true }, '›')),
+    submenu && createElement('div', { role: 'group', 'aria-label': `将 ${project.name} 移动到分组`, style: { ...shell, position: 'absolute', left: openLeft ? 'auto' : '100%', right: openLeft ? '100%' : 'auto', top: -5, maxHeight: `calc(100vh - ${top}px - 8px)`, overflowY: 'auto' } },
+      groups.length ? groups.map(group => menuItem(group.name, () => move(group.id), busy || group.id === groupId)) : createElement('div', { style: { ...item, color: c.foregroundMuted, cursor: 'default' } }, '暂无分组'))),
+  groupId ? menuItem('从分组中移除', () => move(null), busy) : null), document.body);
+}
+
 export function ProjectSidebar({ c, projects, layout, selected, busy, web, select, count, organize }: {
   c: Colors; projects: SidebarProject[]; layout: ProjectLayout; selected: string; busy: boolean; web: boolean;
   select(id: string): void; count(id: string): number; organize(action: ProjectAction): Promise<boolean>;
@@ -55,6 +106,7 @@ export function ProjectSidebar({ c, projects, layout, selected, busy, web, selec
   const [newName, setNewName] = useState('');
   const [rename, setRename] = useState<{ id: string; name: string } | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ project: SidebarProject; groupId: string | null; anchor: MenuAnchor } | null>(null);
   const [error, setError] = useState('');
   const sections = projectSections(projects, layout);
   const inputStyle = { flex: 1, minWidth: 0, color: c.foreground, backgroundColor: c.surface0, borderWidth: 1, borderColor: c.border, borderRadius: 5, fontSize: 11, padding: 7 };
@@ -106,8 +158,9 @@ export function ProjectSidebar({ c, projects, layout, selected, busy, web, selec
         </View>}
       </SortTarget>
       {!section.collapsed && section.projects.map((project, position) => <SortTarget key={project.id} c={c} web={web} disabled={busy} drag={editing ? { kind: 'project', id: project.id } : undefined}
+        onContextMenu={anchor => setContextMenu({ project, groupId: section.id, anchor })}
         onProject={id => { if (id !== project.id) void change({ type: 'moveProject', id, groupId: section.id, beforeId: project.id }); }}>
-        <View testID={`sidebar-project-${project.id}`} style={{ borderRadius: 7, backgroundColor: selected === project.id ? c.surface2 : 'transparent' }}>
+        <View testID={`sidebar-project-${project.id}`} style={{ borderRadius: 7, backgroundColor: selected === project.id || contextMenu?.project.id === project.id ? c.surface2 : 'transparent' }}>
           <Pressable accessibilityRole="button" accessibilityLabel={`筛选项目 ${project.name}`} accessibilityState={{ selected: selected === project.id }} onPress={() => select(project.id)} style={{ ...row, gap: 8, padding: 11 }}>
             <Icon name={editing ? 'GripVertical' : 'FolderGit2'} size={14} color={c.foregroundMuted} /><Text numberOfLines={1} style={{ color: c.foreground, flex: 1, fontSize: 12 }}>{project.name}</Text><Text style={{ color: c.foregroundMuted, fontSize: 11 }}>{count(project.id)}</Text>
           </Pressable>
@@ -124,5 +177,6 @@ export function ProjectSidebar({ c, projects, layout, selected, busy, web, selec
       {!section.collapsed && !section.projects.length && section.id && <Text style={{ color: c.foregroundMuted, fontSize: 10, padding: 9 }}>空分组 · 将项目拖到分组标题</Text>}
     </View>)}
     {!projects.length && <Text style={{ color: c.foregroundMuted, padding: 10, fontSize: 11 }}>尚无项目</Text>}
+    {web && contextMenu ? <ProjectContextMenu c={c} {...contextMenu} groups={layout.groups} busy={busy} close={() => setContextMenu(null)} move={groupId => { void change({ type: 'moveProject', id: contextMenu.project.id, groupId }).then(ok => { if (ok) setContextMenu(null); }); }} /> : null}
   </View>;
 }

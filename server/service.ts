@@ -1,6 +1,6 @@
 import type { PaseoApi, PaseoAgent } from '@getpaseo/client';
 import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type CompleteReviewInput, type CreateInput, type MoveInput, type PatchInput } from '../shared/contracts';
-import { buildCards, defaultModeId, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment } from '../shared/model';
+import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment } from '../shared/model';
 import { Store } from './store';
 import { applyProjectAction, type ProjectAction } from '../shared/projects';
 import { createHash, randomUUID } from 'node:crypto';
@@ -9,6 +9,22 @@ import { access, lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/pr
 import { dirname, extname, join, resolve } from 'node:path';
 
 const agentRefreshConcurrency = 25;
+const providerDiscoveryTimeoutMs = 3000;
+const providerDiscoveryRetryMs = 30000;
+
+class ProviderDiscoveryTimeoutError extends Error {}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ProviderDiscoveryTimeoutError('provider discovery timed out')), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export async function collectPages<T>(fetch: (cursor?: string) => Promise<{ entries: T[]; pageInfo: { hasMore: boolean; nextCursor: string | null } }>): Promise<T[]> {
   const entries: T[] = [];
@@ -28,6 +44,7 @@ export function summarizeAgent(agent: PaseoAgent): Agent {
   return {
     id: agent.id, workspaceId: agent.workspaceId ?? null, title: agent.title || '未命名会话',
     provider: agent.provider, cwd: agent.cwd, status: agent.status,
+    activeTurn: Boolean(agent.activeTurn),
     updatedAt: agent.updatedAt, createdAt: agent.createdAt, lastUserMessageAt: agent.lastUserMessageAt,
     attentionReason: agent.attentionReason ?? null, pendingPermission: agent.pendingPermissions.length > 0,
     archived: Boolean(agent.archivedAt), labels: agent.labels,
@@ -35,7 +52,7 @@ export function summarizeAgent(agent: PaseoAgent): Agent {
 }
 
 export class BoardService {
-  constructor(readonly store: Store) {}
+  constructor(readonly store: Store, private readonly providerTimeoutMs = providerDiscoveryTimeoutMs, private readonly providerRetryMs = providerDiscoveryRetryMs) {}
   async organizeProjects(action: ProjectAction, paseo: PaseoApi) {
     return this.store.update(async data => {
       const workspaces = action.type === 'moveProject' ? await collectPages(cursor => paseo.workspaces.list({ page: { limit: 100, cursor } })) : [];
@@ -80,49 +97,89 @@ export class BoardService {
       }
     }
   }
-  private async saveAttachments(taskId: string, attachments: NonNullable<CreateInput['attachments']>): Promise<TaskAttachment[]> {
-    if (attachments.length > MAX_ATTACHMENT_FILES) throw new Error(`最多添加 ${MAX_ATTACHMENT_FILES} 个附件。`);
-    const oversized = attachments.find(attachment => attachment.size > MAX_ATTACHMENT_SIZE);
+  private async saveAttachments(taskId: string, attachments: NonNullable<CreateInput['attachments']>, existing: TaskAttachment[] = []): Promise<TaskAttachment[]> {
+    const combined = [...existing, ...attachments];
+    if (combined.length > MAX_ATTACHMENT_FILES) throw new Error(`最多添加 ${MAX_ATTACHMENT_FILES} 个附件。`);
+    const oversized = combined.find(attachment => attachment.size > MAX_ATTACHMENT_SIZE);
     if (oversized) throw new Error(`${oversized.fileName} 超过 20 MB，无法添加。`);
-    const total = attachments.reduce((sum, attachment) => sum + attachment.size, 0);
+    const total = combined.reduce((sum, attachment) => sum + attachment.size, 0);
     if (total > MAX_ATTACHMENT_TOTAL_SIZE) throw new Error('附件总大小不能超过 50 MB。');
-    if (new Set(attachments.map(attachment => attachment.id)).size !== attachments.length) throw new Error('附件标识重复，请移除后重新添加。');
+    if (new Set(combined.map(attachment => attachment.id)).size !== combined.length) throw new Error('附件标识重复，请移除后重新添加。');
     if (!attachments.length) return [];
     const directory = this.attachmentDirectory(taskId);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const stored: TaskAttachment[] = [];
-    for (const attachment of attachments) {
-      const bytes = Buffer.from(attachment.dataBase64, 'base64');
-      if (bytes.byteLength !== attachment.size) throw new Error(`附件 ${attachment.fileName} 的内容不完整，请重新添加。`);
-      const rawExtension = extname(attachment.fileName);
-      const extension = /^\.[A-Za-z0-9]{1,16}$/.test(rawExtension) ? rawExtension.toLowerCase() : '';
-      const path = join(directory, `${attachment.id}${extension}`);
-      await writeFile(path, bytes, { flag: 'wx', mode: 0o600 });
-      stored.push({ type: 'uploaded_file', id: attachment.id, fileName: attachment.fileName, mimeType: attachment.mimeType, size: attachment.size, path });
+    let attemptedPath: string | undefined;
+    try {
+      for (const attachment of attachments) {
+        const bytes = Buffer.from(attachment.dataBase64, 'base64');
+        if (bytes.byteLength !== attachment.size) throw new Error(`附件 ${attachment.fileName} 的内容不完整，请重新添加。`);
+        const rawExtension = extname(attachment.fileName);
+        const extension = /^\.[A-Za-z0-9]{1,16}$/.test(rawExtension) ? rawExtension.toLowerCase() : '';
+        const path = join(directory, `${attachment.id}${extension}`);
+        attemptedPath = path;
+        await writeFile(path, bytes, { flag: 'wx', mode: 0o600 });
+        stored.push({ type: 'uploaded_file', id: attachment.id, fileName: attachment.fileName, mimeType: attachment.mimeType, size: attachment.size, path });
+        attemptedPath = undefined;
+      }
+      return stored;
+    } catch (error) {
+      const cleanup = [...stored.map(attachment => attachment.path), ...(attemptedPath ? [attemptedPath] : [])];
+      await Promise.all(cleanup.map(path => rm(path, { force: true }).catch(() => undefined)));
+      throw error;
     }
-    return stored;
   }
   private providerCache?: { time: number; value: Pick<Snapshot, 'providers' | 'models' | 'modes' | 'providerError'> };
+  private providerLatest?: Pick<Snapshot, 'providers' | 'models' | 'modes' | 'providerError'>;
+  private providerRefresh?: Promise<Pick<Snapshot, 'providers' | 'models' | 'modes' | 'providerError'>>;
+  private providerGeneration = 0;
+  private providerLatestGeneration = 0;
+  private providerRetryAfter = 0;
+  private providerLastError = '暂时无法读取 Agent 模型和运行模式列表，请稍后刷新。';
+  private providerFallback(message: string): Pick<Snapshot, 'providers' | 'models' | 'modes' | 'providerError'> {
+    return this.providerLatest
+      ? { ...this.providerLatest, providerError: message }
+      : { providers: [], models: [], modes: [], providerError: message };
+  }
+  private async refreshProviderOptions(paseo: PaseoApi, generation: number): Promise<Pick<Snapshot, 'providers' | 'models' | 'modes' | 'providerError'>> {
+    const snapshot = await paseo.providers.snapshot();
+    const ready = snapshot.entries.filter(entry => entry.enabled && entry.status === 'ready');
+    const providers = ready.map(entry => entry.provider);
+    const models = ready.flatMap(entry => (entry.models ?? []).filter(model => model.isSelectable !== false).map(model => ({
+      id: `${entry.provider}/${model.id}`, label: model.label, provider: entry.provider,
+      thinkingOptions: model.thinkingOptions ?? [], defaultThinkingOptionId: model.defaultThinkingOptionId,
+    })));
+    const modes = ready.flatMap(entry => (entry.modes ?? []).map(mode => ({ id: mode.id, label: mode.label, provider: entry.provider, description: mode.description })));
+    const providerError = snapshot.entries.some(entry => entry.enabled && entry.status !== 'ready') ? '部分 Agent 模型或运行模式仍在加载或暂不可用，请稍后刷新。' : undefined;
+    const value = { providers, models, modes, providerError };
+    if (generation >= this.providerLatestGeneration) {
+      this.providerLatestGeneration = generation;
+      this.providerLatest = value;
+      if (!value.providerError) this.providerCache = { time: Date.now(), value };
+    }
+    return value;
+  }
   private async providerOptions(paseo: PaseoApi): Promise<Pick<Snapshot, 'providers' | 'models' | 'modes' | 'providerError'>> {
     if (this.providerCache && Date.now() - this.providerCache.time < 60000) return this.providerCache.value;
+    if (Date.now() < this.providerRetryAfter) return this.providerFallback(this.providerLastError);
+    if (!this.providerRefresh) {
+      const generation = ++this.providerGeneration;
+      const refresh = withTimeout(this.refreshProviderOptions(paseo, generation), this.providerTimeoutMs);
+      this.providerRefresh = refresh;
+      void refresh.finally(() => { if (this.providerRefresh === refresh) this.providerRefresh = undefined; }).catch(() => undefined);
+    }
     try {
-      const result = await paseo.providers.listAvailable();
-      if (result.error) throw new Error(result.error);
-      const providers = result.providers.filter(p => p.available).map(p => p.provider);
-      const results = await Promise.allSettled(providers.map(async provider => {
-        const [result, modeResult] = await Promise.all([paseo.providers.listModels(provider), paseo.providers.listModes(provider)]);
-        if (result.error || modeResult.error) throw new Error(result.error || modeResult.error!);
-        return {
-          models: (result.models ?? []).filter(m => m.isSelectable !== false).map(m => ({ id: `${provider}/${m.id}`, label: m.label, provider })),
-          modes: (modeResult.modes ?? []).map(m => ({ id: m.id, label: m.label, provider, description: m.description })),
-        };
-      }));
-      const models = results.flatMap(r => r.status === 'fulfilled' ? r.value.models : []);
-      const modes = results.flatMap(r => r.status === 'fulfilled' ? r.value.modes : []);
-      const value = { providers, models, modes, providerError: results.some(r => r.status === 'rejected') ? '部分 Agent 模型或运行模式暂时无法读取，请稍后刷新。' : undefined };
-      if (!value.providerError) this.providerCache = { time: Date.now(), value };
+      const value = await this.providerRefresh;
+      this.providerRetryAfter = value.providerError ? Date.now() + this.providerRetryMs : 0;
+      if (value.providerError) this.providerLastError = value.providerError;
       return value;
-    } catch { return { providers: [], models: [], modes: [], providerError: '暂时无法读取 Agent 模型和运行模式列表，请稍后刷新。' }; }
+    } catch (error) {
+      this.providerLastError = error instanceof ProviderDiscoveryTimeoutError
+        ? '读取 Agent 模型和运行模式超时，看板数据已继续同步；Paseo 恢复后会自动重试。'
+        : '暂时无法读取 Agent 模型和运行模式列表，请稍后刷新。';
+      this.providerRetryAfter = Date.now() + this.providerRetryMs;
+      return this.providerFallback(this.providerLastError);
+    }
   }
   private async agents(paseo: PaseoApi) {
     const entries = await collectPages(cursor => paseo.agents.list({ filter: { includeArchived: false }, sort: [{ key: 'created_at', direction: 'asc' }], page: { limit: 100, cursor } }));
@@ -155,19 +212,39 @@ export class BoardService {
     return { meta: task, agent: record ? summarizeAgent(record.agent) : undefined };
   }
   async patch(input: PatchInput, paseo: PaseoApi) {
-    return this.store.update(async data => {
-      const { meta } = await this.metadata(data, input.id, paseo);
-      if (input.patch.title !== undefined && !input.patch.title.trim()) throw new Error('标题不能为空。');
-      Object.assign(meta, input.patch);
-      return { ok: true };
-    });
+    let storedAdditions: TaskAttachment[] = [];
+    try {
+      return await this.store.update(async data => {
+        const { workspaceId, attachmentAdditions = [], ...metadataPatch } = input.patch;
+        const taskOnlyChange = workspaceId !== undefined || attachmentAdditions.length > 0;
+        const task = data.tasks[input.id];
+        if (taskOnlyChange && !task) throw new Error('只有看板新建的任务可以修改工作区或附件。');
+        if (taskOnlyChange && (task.agentId || task.launchState)) throw new Error('任务开始执行后不能修改工作区或附件。');
+        if (workspaceId !== undefined && !await paseo.workspaces.ref(workspaceId).refresh()) throw new Error('工作区已不存在，请重新选择。');
+        const { meta } = await this.metadata(data, input.id, paseo);
+        if (metadataPatch.title !== undefined && !metadataPatch.title.trim()) throw new Error('标题不能为空。');
+        Object.assign(meta, metadataPatch);
+        if (task) {
+          if (workspaceId !== undefined) task.workspaceId = workspaceId;
+          if (attachmentAdditions.length) {
+            storedAdditions = await this.saveAttachments(task.id, attachmentAdditions, task.attachments);
+            task.attachments.push(...storedAdditions);
+          }
+          task.updatedAt = new Date().toISOString();
+        }
+        return { ok: true };
+      });
+    } catch (error) {
+      await Promise.all(storedAdditions.map(attachment => rm(attachment.path, { force: true }).catch(() => undefined)));
+      throw error;
+    }
   }
   async move(input: MoveInput, paseo: PaseoApi) {
     return this.store.update(async data => {
       const { meta, agent } = await this.metadata(data, input.id, paseo);
-      if (input.stage === 'done' && agent && (agent.status === 'running' || agent.status === 'initializing' || agent.pendingPermission)) throw new Error('会话仍在运行或等待授权，请处理后再标记完成。');
+      if (input.stage === 'done' && agent && (agentIsRunning(agent) || agent.pendingPermission)) throw new Error('会话仍在运行或等待授权，请处理后再标记完成。');
       if (input.stage === 'running' && !agent) throw new Error('请在任务详情中点击“开始执行”，启动 Agent。');
-      if (input.stage !== 'running' && agent && (agent.status === 'running' || agent.status === 'initializing')) throw new Error('Agent 仍在执行，结束后会自动进入待审核。');
+      if (input.stage !== 'running' && agent && agentIsRunning(agent)) throw new Error('Agent 仍在执行，结束后会自动进入待审核。');
       if (input.stage !== 'blocked' && agent && (agent.pendingPermission || agent.status === 'error')) throw new Error('请先在 Paseo 处理授权或执行错误。');
       meta.stage = input.stage; meta.stageTurn = agent?.lastUserMessageAt ?? null;
       // Reindex a lane under the same writer lock, avoiding drifting fractional ranks.
@@ -209,11 +286,22 @@ export class BoardService {
     if (!/^[^/]+\/.+$/.test(input.provider)) throw new Error('请选择具体的 Agent 模型。');
     const workspace = await paseo.workspaces.ref(input.workspaceId).refresh();
     if (!workspace) throw new Error('工作区已不存在，请重新选择。');
-    const modeResult = await paseo.providers.listModes(input.provider.split('/')[0], { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath });
+    const providerId = input.provider.split('/')[0];
+    const modelId = input.provider.slice(providerId.length + 1);
+    const [modeResult, modelResult] = await Promise.all([
+      paseo.providers.listModes(providerId, { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath }),
+      paseo.providers.listModels(providerId, { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath }),
+    ]);
     if (modeResult.error) throw new Error(`无法读取运行模式：${modeResult.error}`);
+    if (modelResult.error) throw new Error(`无法读取 Thinking Mode：${modelResult.error}`);
     const modes = modeResult.modes ?? [];
-    const modeId = input.modeId ?? defaultModeId(modes, input.provider.split('/')[0]);
+    const modeId = input.modeId ?? defaultModeId(modes, providerId);
     if (modeId && !modes.some(mode => mode.id === modeId)) throw new Error('所选运行模式已不可用，请刷新后重新选择。');
+    const model = (modelResult.models ?? []).find(item => item.id === modelId);
+    if (!model) throw new Error('所选 Agent 模型已不可用，请刷新后重新选择。');
+    const thinkingOptions = model.thinkingOptions ?? [];
+    const thinkingOptionId = input.thinkingOptionId ?? defaultThinkingOptionId(thinkingOptions, model.defaultThinkingOptionId);
+    if (thinkingOptionId && !thinkingOptions.some(option => option.id === thinkingOptionId)) throw new Error('所选 Thinking Mode 已不可用，请刷新后重新选择。');
     return this.store.exclusive(async () => {
       const data = await this.store.read();
       const existing = Object.values(data.tasks).find(task => task.createRequestId === input.clientRequestId);
@@ -223,7 +311,7 @@ export class BoardService {
       const { attachments = [], clientRequestId, ...fields } = input;
       try {
         const storedAttachments = await this.saveAttachments(taskId, attachments);
-        const task = taskSchema.parse({ ...fields, modeId, createRequestId: clientRequestId, attachments: storedAttachments, id: taskId, createdAt: now, updatedAt: now, stage: 'todo' });
+        const task = taskSchema.parse({ ...fields, modeId, thinkingOptionId, createRequestId: clientRequestId, attachments: storedAttachments, id: taskId, createdAt: now, updatedAt: now, stage: 'todo' });
         data.tasks[task.id] = task;
         await this.store.write(data);
         return task;
@@ -275,14 +363,26 @@ export class BoardService {
       if (task.launchState) throw new Error('上次启动结果尚未确认。请先在 Paseo 检查是否已创建会话，避免重复执行；刷新后重试可关联已创建的会话。');
       const workspace = await paseo.workspaces.ref(task.workspaceId).refresh();
       if (!workspace) throw new Error('工作区不可用，请先在 Paseo 恢复该工作区。');
-      const modeResult = await paseo.providers.listModes(task.provider.split('/')[0], { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath });
+      const providerId = task.provider.split('/')[0];
+      const modelId = task.provider.slice(providerId.length + 1);
+      const [modeResult, modelResult] = await Promise.all([
+        paseo.providers.listModes(providerId, { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath }),
+        paseo.providers.listModels(providerId, { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath }),
+      ]);
       if (modeResult.error) throw new Error(`无法确认运行模式：${modeResult.error}`);
+      if (modelResult.error) throw new Error(`无法确认 Thinking Mode：${modelResult.error}`);
       const modes = modeResult.modes ?? [];
-      const modeId = task.modeId ?? defaultModeId(modes, task.provider.split('/')[0]);
+      const modeId = task.modeId ?? defaultModeId(modes, providerId);
       if (modeId && !modes.some(mode => mode.id === modeId)) throw new Error('任务选择的运行模式已不可用，请检查 Agent 配置后重试。');
+      const model = (modelResult.models ?? []).find(item => item.id === modelId);
+      if (!model) throw new Error('任务选择的 Agent 模型已不可用，请刷新看板后重试。');
+      const thinkingOptions = model.thinkingOptions ?? [];
+      const thinkingOptionId = task.thinkingOptionId ?? defaultThinkingOptionId(thinkingOptions, model.defaultThinkingOptionId);
+      if (thinkingOptionId && !thinkingOptions.some(option => option.id === thinkingOptionId)) throw new Error('任务选择的 Thinking Mode 已不可用，请刷新看板后重试。');
       // Drafts created before run-mode support did not persist modeId. Resolve
       // and store the same Full Access default before their first prompt starts.
       if (!task.modeId && modeId) task.modeId = modeId;
+      if (!task.thinkingOptionId && thinkingOptionId) task.thinkingOptionId = thinkingOptionId;
       const expectedDirectory = resolve(this.attachmentDirectory(id));
       try { await Promise.all(task.attachments.map(async attachment => {
         const path = resolve(attachment.path);
@@ -297,8 +397,8 @@ export class BoardService {
       await this.store.write(data);
       try {
         const agent = await paseo.workspaces.ref(task.workspaceId).agents.create({
-          config: { provider: task.provider, ...(modeId ? { modeId } : {}) }, title: task.title,
-          prompt: task.description ? `${task.title}\n\n${task.description}` : task.title,
+          config: { provider: task.provider, ...(modeId ? { modeId } : {}), ...(thinkingOptionId ? { thinkingOptionId } : {}) }, title: task.title,
+          prompt: task.description,
           attachments: task.attachments,
           labels: { 'paseo-kanban-task': id },
         });

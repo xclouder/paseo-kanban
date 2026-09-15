@@ -30,12 +30,92 @@ test('resize the project sidebar and restore its width', async ({ page }) => {
   await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeCloseTo(resized, 0);
 });
 
+test('auto-hide and toggle the Paseo host sidebar without hiding the board sidebar', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  const hostSidebar = page.getByTestId('left-sidebar-resize-handle');
+  await expect(hostSidebar).toBeHidden();
+  await expect(page.getByTestId('board-sidebar')).toBeVisible();
+  const toggle = page.getByRole('button', { name: '显示 Paseo 主侧栏', exact: true });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(hostSidebar).toBeVisible();
+  const hide = page.getByRole('button', { name: '隐藏 Paseo 主侧栏', exact: true });
+  await expect(hide).toHaveAttribute('aria-expanded', 'true');
+  await hide.click();
+  await expect(hostSidebar).toBeHidden();
+  await expect(page.getByTestId('board-sidebar')).toBeVisible();
+  await page.keyboard.press('Control+Period');
+  await expect(hostSidebar).toBeVisible();
+  await expect(page.getByRole('button', { name: '隐藏 Paseo 主侧栏', exact: true })).toBeVisible();
+  await page.keyboard.press('Control+Period');
+  await expect(hostSidebar).toBeHidden();
+
+  await page.goto('/?sidebar=hidden');
+  await expect(page.getByTestId('left-sidebar-resize-handle')).toBeHidden();
+  await expect(page.getByRole('button', { name: '显示 Paseo 主侧栏', exact: true })).toBeVisible();
+
+  await page.goto('/?sidebar=late');
+  await expect(page.getByTestId('left-sidebar-resize-handle')).toHaveCount(1);
+  await expect(page.getByTestId('left-sidebar-resize-handle')).toBeHidden();
+  await expect(page.getByTestId('board-sidebar')).toBeVisible();
+
+  await page.goto('/?sidebar-button=broken');
+  await expect(page.getByTestId('left-sidebar-resize-handle')).toBeHidden();
+  await expect(page.getByRole('button', { name: '显示 Paseo 主侧栏', exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('present the full-screen board exit as a return action instead of a second close icon', async ({ page }) => {
+  const addHostCloseButton = () => page.evaluate(() => {
+    const button = document.createElement('div');
+    button.dataset.testid = 'plugin-surface-close';
+    button.setAttribute('role', 'button');
+    button.tabIndex = 0;
+    button.setAttribute('aria-label', 'Close plugin');
+    button.title = 'Close';
+    button.innerHTML = '<svg aria-hidden="true"></svg>';
+    button.addEventListener('click', () => {
+      document.body.dataset.returnedToPaseo = String(Number(document.body.dataset.returnedToPaseo ?? '0') + 1);
+    });
+    document.body.appendChild(button);
+  });
+  await page.goto('/');
+  await addHostCloseButton();
+
+  const button = page.getByRole('button', { name: '返回 Paseo 主界面', exact: true });
+  await expect(button).toHaveAttribute('title', '返回 Paseo 主界面');
+  await expect(button).toHaveAttribute('data-paseo-kanban-return', '');
+  await expect(button).toHaveText('返回 Paseo');
+  await expect(page.getByTestId('plugin-surface-close')).toBeHidden();
+  await button.click();
+  await expect(page.locator('body')).toHaveAttribute('data-returned-to-paseo', '1');
+  await button.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('body')).toHaveAttribute('data-returned-to-paseo', '2');
+  await page.keyboard.press('Space');
+  await expect(page.locator('body')).toHaveAttribute('data-returned-to-paseo', '3');
+
+  await page.getByTestId('plugin-surface-close').evaluate(element => element.remove());
+  await expect(page.getByTestId('paseo-kanban-surface-return')).toHaveCount(0);
+
+  await page.setViewportSize({ width: 700, height: 800 });
+  await page.reload();
+  await addHostCloseButton();
+  await expect(page.getByTestId('paseo-kanban-surface-return')).toBeVisible();
+  await expect(page.getByTestId('board-sidebar')).toHaveCount(0);
+});
+
 test('filter workspaces, paste an attachment, and remember the default model', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await expect(page.getByLabel('搜索工作区', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '选择工作区，当前 paseo-kanban / main', exact: true }).click();
   await page.getByLabel('搜索工作区', { exact: true }).fill('agent-service api');
-  await expect(page.getByRole('button', { name: 'agent-service / feature/events', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'paseo-kanban / main', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '选择工作区 agent-service / feature/events', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '选择工作区 paseo-kanban / main', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '选择工作区 agent-service / feature/events', exact: true }).click();
+  await expect(page.getByTestId('workspace-subpanel')).toHaveCount(0);
   await page.evaluate(() => {
     const transfer = new DataTransfer();
     transfer.items.add(new File(['clipboard image'], 'clipboard.png', { type: 'image/png' }));
@@ -51,10 +131,130 @@ test('filter workspaces, paste an attachment, and remember the default model', a
   await expect(page.getByRole('button', { name: '当前默认模型', exact: true })).toBeVisible();
 });
 
+test('change workspace and paste another attachment before a task starts', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.getByLabel('任务标题', { exact: true }).fill('可调整工作区的任务');
+  await page.getByRole('button', { name: '创建待办任务', exact: true }).click();
+
+  await page.getByRole('button', { name: '选择工作区，当前 paseo-kanban / main', exact: true }).click();
+  await page.getByRole('button', { name: '选择工作区 agent-service / feature/events', exact: true }).click();
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['detail paste'], 'detail-paste.png', { type: 'image/png' }));
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByText('detail-paste.png', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
+  await expect(page.getByTestId('task-attachments').getByText('detail-paste.png', { exact: true })).toBeVisible();
+  await expect(page.getByTestId(/card-task:/).filter({ hasText: '可调整工作区的任务' })).toContainText('agent-service');
+
+  await page.reload();
+  await page.getByRole('button', { name: '查看任务 可调整工作区的任务', exact: true }).click();
+  await expect(page.getByRole('button', { name: '选择工作区，当前 agent-service / feature/events', exact: true })).toBeVisible();
+  await expect(page.getByTestId('task-attachments').getByText('detail-paste.png', { exact: true })).toBeVisible();
+});
+
+test('paste goes only to the visible new-task attachment picker', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true }).click();
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['single target'], 'only-new-task.png', { type: 'image/png' }));
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByText('only-new-task.png', { exact: true })).toHaveCount(1);
+  await page.getByLabel('关闭新建任务', { exact: true }).click();
+  await page.getByRole('button', { name: '放弃修改', exact: true }).click();
+  await expect(page.getByText('only-new-task.png', { exact: true })).toHaveCount(0);
+});
+
+test('confirm before discarding a changed new task with Escape', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  const title = page.getByLabel('任务标题', { exact: true });
+  await title.fill('不能意外丢失的草稿');
+  await page.keyboard.press('Escape');
+  const confirmation = page.getByRole('alert');
+  await expect(confirmation).toContainText('放弃未保存的修改？');
+  await page.keyboard.press('Tab');
+  await expect(confirmation.locator('button:focus')).toHaveCount(1);
+  await page.keyboard.down('Escape');
+  await expect(confirmation).toHaveCount(0);
+  await page.keyboard.up('Escape');
+  await expect(confirmation).toHaveCount(0);
+  await expect(title).toHaveValue('不能意外丢失的草稿');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '继续编辑', exact: true }).click();
+  await expect(title).toHaveValue('不能意外丢失的草稿');
+  await page.getByLabel('关闭新建任务', { exact: true }).click();
+  await page.getByRole('button', { name: '放弃修改', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(0);
+
+  await page.getByRole('button', { name: /^查看任务 / }).first().click();
+  await expect(page.getByLabel('关闭详情', { exact: true })).toHaveCount(1);
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.keyboard.down('Escape');
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(0);
+  await page.keyboard.up('Escape');
+  await expect(page.getByLabel('关闭详情', { exact: true })).toHaveCount(1);
+});
+
+test('create a new task with Ctrl+Enter', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.getByLabel('任务标题', { exact: true }).fill('快捷键创建任务');
+  await page.keyboard.press('Control+Enter');
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /查看任务 快捷键创建任务/ })).toBeVisible();
+});
+
+test('do not submit with Ctrl+Enter while discard confirmation is open', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.getByLabel('任务标题', { exact: true }).fill('确认框后的任务');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('alert')).toContainText('放弃未保存的修改？');
+  await page.keyboard.press('Control+Enter');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('button', { name: /查看任务 确认框后的任务/ })).toHaveCount(0);
+});
+
+test('do not close a new task while a pasted attachment is still loading', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await page.evaluate(() => {
+    const original = FileReader.prototype.readAsDataURL;
+    FileReader.prototype.readAsDataURL = function(blob) { setTimeout(() => original.call(this, blob), 500); };
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['clipboard image'], 'slow-clipboard.png', { type: 'image/png' }));
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByText('正在读取附件…', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByText('slow-clipboard.png', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('alert')).toContainText('放弃未保存的修改？');
+});
+
 test('create, save, launch and navigate with persisted task metadata', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Thinking Mode Medium', exact: true })).toBeChecked();
+  await expect(page.getByRole('radio', { name: 'Thinking Mode High', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'codex / 示例模型', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Thinking Mode High', exact: true })).toBeChecked();
+  await page.getByRole('button', { name: 'codex / 无 Thinking 模型', exact: true }).click();
+  await expect(page.getByText('当前模型不支持 Thinking Mode', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'codex / 示例模型', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Thinking Mode High', exact: true })).toBeChecked();
+  await page.getByRole('radio', { name: 'Thinking Mode Low', exact: true }).click();
   await expect(page.getByRole('radio', { name: '运行模式 Full Access', exact: true })).toBeChecked();
   await page.getByLabel('任务标题', { exact: true }).fill('端到端验证任务');
   await page.getByLabel('任务说明', { exact: true }).fill('确认任务内容在启动前被保存');
@@ -62,6 +262,7 @@ test('create, save, launch and navigate with persisted task metadata', async ({ 
   await page.getByRole('button', { name: '创建待办任务', exact: true }).click();
   await expect(page.getByTestId('column-todo').getByRole('button', { name: '查看任务 端到端验证任务', exact: true })).toBeVisible();
   await expect(page.getByTestId('task-run-mode')).toHaveText('Full Access');
+  await expect(page.getByTestId('task-thinking-mode')).toHaveText('Low');
   await page.getByLabel('任务标题', { exact: true }).fill('修改后的验证任务');
   await expect(page.getByRole('button', { name: '开始执行', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '保存修改', exact: true }).click();
@@ -101,6 +302,34 @@ test('legacy drafts show the Full Access mode that launch will migrate to', asyn
   await page.goto('/');
   await page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true }).click();
   await expect(page.getByTestId('task-run-mode')).toHaveText('Full Access');
+  await expect(page.getByTestId('task-thinking-mode')).toHaveText('High');
+});
+
+test('launched legacy tasks do not guess an unrecorded thinking mode', async ({ page }) => {
+  await page.goto('/');
+  const taskCard = () => page.getByTestId('card-task:preview-02').getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true });
+  await taskCard().click();
+  await page.getByRole('button', { name: '开始执行', exact: true }).click();
+  await page.evaluate(() => {
+    const key = 'paseo-kanban-preview-v1';
+    const snapshot = JSON.parse(localStorage.getItem(key)!);
+    delete snapshot.store.tasks['task:preview-02'].thinkingOptionId;
+    localStorage.setItem(key, JSON.stringify(snapshot));
+  });
+  await page.reload();
+  await taskCard().click();
+  await expect(page.getByTestId('task-thinking-mode')).toHaveText('未记录（Agent 默认）');
+
+  await page.evaluate(() => {
+    const key = 'paseo-kanban-preview-v1';
+    const snapshot = JSON.parse(localStorage.getItem(key)!);
+    delete snapshot.store.tasks['task:preview-02'].agentId;
+    snapshot.store.tasks['task:preview-02'].launchState = 'uncertain';
+    localStorage.setItem(key, JSON.stringify(snapshot));
+  });
+  await page.reload();
+  await taskCard().click();
+  await expect(page.getByTestId('task-thinking-mode')).toHaveText('未记录（Agent 默认）');
 });
 
 test('drag attachments into a new task and delete it before it runs', async ({ page }) => {

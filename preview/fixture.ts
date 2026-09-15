@@ -12,7 +12,7 @@ export function fixture(): Snapshot {
     ['session-07', '更新组件库的暗色模式样式', 'claude', 'idle', 'workspace-design', 144, ['设计系统']],
     ['session-08', '修复移动端键盘遮挡输入框', 'codex', 'idle', 'workspace-web', 240, ['移动端', 'Bug']],
   ] as const;
-  const agents = specs.map(([id, title, provider, status, workspaceId, minutes]) => ({ id, title, provider, status, workspaceId, cwd: `/projects/${workspaceId}`, updatedAt: time(minutes), createdAt: time(minutes + 60), lastUserMessageAt: time(minutes + 30), attentionReason: id === 'session-04' ? 'permission' : status === 'idle' ? 'finished' : null, pendingPermission: id === 'session-04', archived: false, labels: {} }));
+  const agents = specs.map(([id, title, provider, status, workspaceId, minutes]) => ({ id, title, provider, status, activeTurn: status === 'running', workspaceId, cwd: `/projects/${workspaceId}`, updatedAt: time(minutes), createdAt: time(minutes + 60), lastUserMessageAt: time(minutes + 30), attentionReason: id === 'session-04' ? 'permission' : status === 'idle' ? 'finished' : null, pendingPermission: id === 'session-04', archived: false, labels: {} }));
   return {
     agents,
     workspaces: [
@@ -20,7 +20,11 @@ export function fixture(): Snapshot {
       { id: 'workspace-api', name: 'feature/events', project: 'agent-service', projectId: 'project-api', directory: 'J:\\projects\\agent-service' },
       { id: 'workspace-design', name: 'design-system', project: 'paseo-kanban', projectId: 'project-kanban', directory: 'J:\\projects\\design-system' },
     ],
-    providers: ['claude', 'codex'], models: [{ id: 'claude/preview-model', provider: 'claude', label: '示例模型' }, { id: 'codex/preview-model', provider: 'codex', label: '示例模型' }], fetchedAt: time(0),
+    providers: ['claude', 'codex'], models: [
+      { id: 'claude/preview-model', provider: 'claude', label: '示例模型', thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }], defaultThinkingOptionId: 'medium' },
+      { id: 'codex/preview-model', provider: 'codex', label: '示例模型', thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }, { id: 'high', label: 'High' }, { id: 'xhigh', label: 'Extra High' }] },
+      { id: 'codex/basic-model', provider: 'codex', label: '无 Thinking 模型', thinkingOptions: [] },
+    ], fetchedAt: time(0),
     modes: [
       { provider: 'claude', id: 'plan', label: 'Plan Mode' },
       { provider: 'claude', id: 'default', label: 'Always Ask' },

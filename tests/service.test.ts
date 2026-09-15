@@ -7,7 +7,7 @@ import { createPaseoApi, type PaseoApi } from '@getpaseo/client';
 import { Store } from '../server/store';
 import { BoardService, collectPages } from '../server/service';
 import { fixture } from '../preview/fixture';
-import { emptyStore, metadataSchema, taskSchema } from '../shared/model';
+import { buildCards, emptyStore, metadataSchema, taskSchema } from '../shared/model';
 
 async function setup(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'paseo-kanban-test-'));
@@ -17,9 +17,9 @@ async function setup(t: TestContext) {
 }
 function mockApi() {
   const snapshot = fixture();
-  const agents = snapshot.agents.map(a => ({ ...a, title: a.title, archivedAt: null, pendingPermissions: a.pendingPermission ? [{ id: 'permission' }] : [], capabilities: {}, model: 'model', availableModes: [], currentModeId: null, persistence: null }));
+  const agents = snapshot.agents.map(a => ({ ...a, activeTurn: a.activeTurn ? { turnId: 'active-turn', startedAt: a.updatedAt } : null as { turnId: string; startedAt: string | null } | null, title: a.title, archivedAt: null, pendingPermissions: a.pendingPermission ? [{ id: 'permission' }] : [], capabilities: {}, model: 'model', availableModes: [], currentModeId: null, persistence: null }));
   let creates = 0, failure = false, loseResponse = false;
-  const configs: { provider: string; modeId?: string }[] = [];
+  const configs: { provider: string; modeId?: string; thinkingOptionId?: string }[] = [];
   const createOptions: Record<string, unknown>[] = [];
   const api = {
     agents: {
@@ -28,7 +28,7 @@ function mockApi() {
     },
     workspaces: {
       list: async () => ({ entries: snapshot.workspaces.map(w => ({ ...w, projectDisplayName: w.project, projectRootPath: w.directory, workspaceDirectory: w.directory })), pageInfo: { hasMore: false, nextCursor: null } }),
-      ref: (id: string) => ({ refresh: async () => { const w = snapshot.workspaces.find(w => w.id === id); return w ? { ...w, workspaceDirectory: w.directory, projectRootPath: w.directory } : null; }, agents: { create: async (options: { config: { provider: string; modeId?: string }; labels: Record<string,string>; title: string }) => {
+      ref: (id: string) => ({ refresh: async () => { const w = snapshot.workspaces.find(w => w.id === id); return w ? { ...w, workspaceDirectory: w.directory, projectRootPath: w.directory } : null; }, agents: { create: async (options: { config: { provider: string; modeId?: string; thinkingOptionId?: string }; labels: Record<string,string>; title: string }) => {
         creates++; assert.match(options.config.provider, /^[^/]+\/.+$/);
         createOptions.push(options as unknown as Record<string, unknown>);
         configs.push(options.config);
@@ -37,11 +37,20 @@ function mockApi() {
         agents.push(agent); if (loseResponse) throw new Error('response lost'); return { id: agent.id };
       } } }),
     },
-    providers: { listAvailable: async () => ({ providers: [{ provider: 'codex', available: true }] }), listModels: async () => ({ models: [{ id: 'model', label: 'Model' }] }), listModes: async () => ({ modes: snapshot.modes.filter(mode => mode.provider === 'codex') }) },
+    providers: { snapshot: async () => ({ requestId: 'snapshot', snapshotHash: 'snapshot', fetchedAt: new Date().toISOString(), entries: [{ provider: 'codex', status: 'ready', enabled: true, models: [{ id: 'model', label: 'Model', thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }, { id: 'high', label: 'High' }], defaultThinkingOptionId: 'medium' }], modes: snapshot.modes.filter(mode => mode.provider === 'codex') }] }), listAvailable: async () => ({ providers: [{ provider: 'codex', available: true }] }), listModels: async () => ({ models: [{ id: 'model', label: 'Model', thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }, { id: 'high', label: 'High' }], defaultThinkingOptionId: 'medium' }] }), listModes: async () => ({ modes: snapshot.modes.filter(mode => mode.provider === 'codex') }) },
   } as unknown as PaseoApi;
   return { api, agents, configs, createOptions, get creates() { return creates; }, fail: () => { failure = true; }, lose: () => { loseResponse = true; } };
 }
 const input = { clientRequestId: '66666666-6666-4666-8666-666666666666', title: 'Ship feature', description: 'Acceptance criteria', workspaceId: 'workspace-web', provider: 'codex/model', priority: 'high' as const, tags: ['test'] };
+
+test('an active turn stays running after the client reconnects with an idle status', async t => {
+  const { service } = await setup(t); const mock = mockApi();
+  mock.agents[0].status = 'idle';
+  mock.agents[0].activeTurn = { turnId: 'turn-after-restart', startedAt: new Date().toISOString() };
+  const snapshot = await service.read(mock.api);
+  assert.equal(snapshot.agents[0].activeTurn, true);
+  assert.equal(buildCards(snapshot).find(card => card.agent?.id === mock.agents[0].id)?.stage, 'running');
+});
 
 test('project organization merges concurrent edits and survives store reload without changing tasks', async t => {
   const { service, store } = await setup(t); const { api } = mockApi();
@@ -87,16 +96,81 @@ test('a failed operation releases the writer lock', async t => {
 test('read imports sessions and exposes concrete provider model options', async t => {
   const { service } = await setup(t); const { api } = mockApi(); const snapshot = await service.read(api);
   assert.equal(snapshot.agents.length, 8); assert.equal(snapshot.models[0].id, 'codex/model');
+  assert.equal(snapshot.models[0].thinkingOptions.find(option => option.id === 'high')?.label, 'High');
   assert(snapshot.modes.some(mode => mode.provider === 'codex' && mode.id === 'full-access'));
+});
+test('provider snapshot timeout does not block reads and retries after a cooldown', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'paseo-kanban-provider-timeout-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const service = new BoardService(new Store(join(directory, 'board.json')), 25, 60000);
+  const mock = mockApi();
+  await service.create(input, mock.api);
+  let calls = 0;
+  let recovered = false;
+  const snapshot = mock.api.providers.snapshot;
+  mock.api.providers.snapshot = async () => {
+    calls++;
+    if (!recovered) return await new Promise<never>(() => undefined);
+    return snapshot();
+  };
+  const started = Date.now();
+  const [first, concurrent] = await Promise.all([service.read(mock.api), service.read(mock.api)]);
+  const second = await service.read(mock.api);
+  assert(Date.now() - started < 500);
+  assert.equal(first.agents.length, 8);
+  assert.equal(first.workspaces.length, 3);
+  assert.equal(Object.keys(first.store.tasks).length, 1);
+  assert.match(first.providerError ?? '', /超时/);
+  assert.match(concurrent.providerError ?? '', /超时/);
+  assert.equal(second.agents.length, 8);
+  assert.equal(calls, 1);
+  recovered = true;
+  (service as unknown as { providerRetryAfter: number }).providerRetryAfter = 0;
+  const restored = await service.read(mock.api);
+  assert.equal(calls, 2);
+  assert.equal(restored.models[0].id, 'codex/model');
+  assert.equal(restored.providerError, undefined);
+});
+test('partial provider snapshots keep ready models during the retry cooldown', async t => {
+  const { store } = await setup(t);
+  const service = new BoardService(store, 25, 1000);
+  const mock = mockApi();
+  const ready = await mock.api.providers.snapshot();
+  let calls = 0;
+  mock.api.providers.snapshot = async () => {
+    calls++;
+    return { ...ready, entries: [...ready.entries, { provider: 'claude', status: 'loading', enabled: true }] };
+  };
+  const first = await service.read(mock.api);
+  const second = await service.read(mock.api);
+  assert.equal(first.models[0].id, 'codex/model');
+  assert.match(first.providerError ?? '', /加载或暂不可用/);
+  assert.equal(second.models[0].id, 'codex/model');
+  assert.equal(second.providerError, first.providerError);
+  assert.equal(calls, 1);
 });
 test('create is a draft; concurrent launch invokes provider exactly once', async t => {
   const { service, store } = await setup(t); const mock = mockApi();
   const task = await service.create(input, mock.api); assert.equal(mock.creates, 0);
   assert.equal(task.modeId, 'full-access');
+  assert.equal(task.thinkingOptionId, 'high');
   const results = await Promise.all([service.launch(task.id, mock.api), service.launch(task.id, mock.api)]);
   assert.equal(mock.creates, 1); assert.equal(results[0].agentId, results[1].agentId);
   assert.equal((await store.read()).tasks[task.id].agentId, results[0].agentId);
   assert.equal(mock.configs[0].modeId, 'full-access');
+  assert.equal(mock.configs[0].thinkingOptionId, 'high');
+});
+test('launch keeps the title out of the prompt body', async t => {
+  const { service } = await setup(t); const mock = mockApi();
+  const task = await service.create(input, mock.api);
+  await service.launch(task.id, mock.api);
+  assert.equal(mock.createOptions[0].title, input.title);
+  assert.equal(mock.createOptions[0].prompt, input.description);
+
+  const taskWithoutDescription = await service.create({ ...input, clientRequestId: '77777777-7777-4777-8777-777777777777', description: '' }, mock.api);
+  await service.launch(taskWithoutDescription.id, mock.api);
+  assert.equal(mock.createOptions[1].title, input.title);
+  assert.equal(mock.createOptions[1].prompt, '');
 });
 test('retrying the same create request returns the persisted task without duplicating it', async t => {
   const { service, store } = await setup(t); const mock = mockApi();
@@ -117,6 +191,33 @@ test('attachments persist outside the board file and are forwarded on launch', a
   assert(!boardFile.includes(contents.toString('base64')));
   await service.launch(task.id, mock.api);
   assert.deepEqual(mock.createOptions[0].attachments, task.attachments);
+});
+test('a never-started task can change workspace and add pasted attachments', async t => {
+  const { service, store } = await setup(t); const mock = mockApi();
+  const task = await service.create(input, mock.api);
+  const contents = Buffer.from('pasted image');
+  await service.patch({ id: task.id, patch: {
+    workspaceId: 'workspace-api',
+    attachmentAdditions: [{ id: '12121212-1212-4121-8121-121212121212', fileName: 'pasted.png', mimeType: 'image/png', size: contents.byteLength, dataBase64: contents.toString('base64') }],
+  } }, mock.api);
+  const changed = (await store.read()).tasks[task.id];
+  assert.equal(changed.workspaceId, 'workspace-api');
+  assert.equal(changed.attachments.length, 1);
+  assert.equal(await readFile(changed.attachments[0].path, 'utf8'), 'pasted image');
+  await service.launch(task.id, mock.api);
+  assert.equal(mock.agents.at(-1)?.workspaceId, 'workspace-api');
+  assert.deepEqual(mock.createOptions[0].attachments, changed.attachments);
+  await assert.rejects(() => service.patch({ id: task.id, patch: { workspaceId: 'workspace-design' } }, mock.api), /开始执行后不能修改/);
+});
+test('a failed attachment patch removes files written earlier in the same patch', async t => {
+  const { service, store } = await setup(t); const mock = mockApi();
+  const task = await service.create(input, mock.api);
+  const first = { id: '13131313-1313-4131-8131-131313131313', fileName: 'first.txt', mimeType: 'text/plain', size: 5, dataBase64: Buffer.from('first').toString('base64') };
+  const incomplete = { id: '14141414-1414-4141-8141-141414141414', fileName: 'broken.txt', mimeType: 'text/plain', size: 20, dataBase64: Buffer.from('short').toString('base64') };
+  await assert.rejects(() => service.patch({ id: task.id, patch: { attachmentAdditions: [first, incomplete] } }, mock.api), /内容不完整/);
+  assert.equal((await store.read()).tasks[task.id].attachments.length, 0);
+  await service.patch({ id: task.id, patch: { attachmentAdditions: [first] } }, mock.api);
+  assert.equal((await store.read()).tasks[task.id].attachments.length, 1);
 });
 test('deleting a never-run task removes its stored attachments and launched tasks are protected', async t => {
   const { service, store } = await setup(t); const mock = mockApi();
@@ -163,6 +264,24 @@ test('selected restrictive mode survives reload and is forwarded on launch', asy
   assert.equal((await store.read()).tasks[task.id].modeId, 'auto');
   await reloaded.launch(task.id, mock.api);
   assert.equal(mock.configs[0].modeId, 'auto');
+});
+test('selected thinking mode survives reload and is forwarded on launch', async t => {
+  const { service, store } = await setup(t); const mock = mockApi();
+  const task = await service.create({ ...input, thinkingOptionId: 'low' }, mock.api);
+  const reloaded = new BoardService(new Store(store.file));
+  assert.equal((await store.read()).tasks[task.id].thinkingOptionId, 'low');
+  await reloaded.launch(task.id, mock.api);
+  assert.equal(mock.configs[0].thinkingOptionId, 'low');
+});
+test('invalid or unavailable thinking mode fails before any launch state is written', async t => {
+  const { service, store } = await setup(t); const mock = mockApi();
+  await assert.rejects(() => service.create({ ...input, thinkingOptionId: 'ultra' }, mock.api), /Thinking Mode 已不可用/);
+  assert.equal(Object.keys((await store.read()).tasks).length, 0);
+  const task = await service.create({ ...input, thinkingOptionId: 'low' }, mock.api);
+  mock.api.providers.listModels = async () => ({ provider: 'codex', fetchedAt: '', requestId: '', models: [{ provider: 'codex', id: 'model', label: 'Model', thinkingOptions: [{ id: 'high', label: 'High' }] }] });
+  await assert.rejects(() => service.launch(task.id, mock.api), /Thinking Mode 已不可用/);
+  assert.equal((await store.read()).tasks[task.id].launchState, undefined);
+  assert.equal(mock.creates, 0);
 });
 test('invalid or unavailable mode fails before any launch state is written', async t => {
   const { service, store } = await setup(t); const mock = mockApi();
@@ -224,10 +343,11 @@ test('real installed SDK splits provider/model and forwards workspace and prompt
   const driver = { createAgent: async (options: Record<string,unknown>) => { calls.push(options); return { id: 'real-sdk-agent' }; } };
   const api = createPaseoApi(driver as never);
   const attachments = [{ type: 'uploaded_file' as const, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', fileName: 'brief.pdf', mimeType: 'application/pdf', size: 12, path: 'C:/uploads/brief.pdf' }];
-  const result = await api.agents.create({ config: { provider: 'codex/test-model', modeId: 'full-access' }, cwd: 'C:/test', prompt: 'implement', title: 'Task', attachments });
+  const result = await api.agents.create({ config: { provider: 'codex/test-model', modeId: 'full-access', thinkingOptionId: 'high' }, cwd: 'C:/test', prompt: 'implement', title: 'Task', attachments });
   assert.equal(result.id, 'real-sdk-agent');
   assert.equal((calls[0].config as Record<string,unknown>).model, 'test-model');
   assert.equal((calls[0].config as Record<string,unknown>).modeId, 'full-access');
+  assert.equal((calls[0].config as Record<string,unknown>).thinkingOptionId, 'high');
   assert.equal(calls[0].initialPrompt, 'implement');
   assert.deepEqual(calls[0].attachments, attachments);
   await assert.rejects(() => api.agents.create({ config: { provider: 'codex' }, cwd: 'C:/test' }), /provider\/model/);
