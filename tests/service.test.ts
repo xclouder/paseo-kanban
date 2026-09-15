@@ -436,6 +436,20 @@ test('batch completion marks every reviewed task done atomically', async t => {
   assert.equal(data.sessions['session-06'].stage, 'done');
   assert(data.sessions['session-05'].stageTurn);
 });
+test('batch archive hides every completed task atomically', async t => {
+  const { service, store } = await setup(t); const { api } = mockApi();
+  await service.move({ id: 'agent:session-07', stage: 'done' }, api);
+  await service.move({ id: 'agent:session-08', stage: 'done' }, api);
+  await assert.rejects(() => service.archiveDone({ ids: ['agent:session-07', 'agent:session-05'] }, api), /已不在已完成状态/);
+  assert.equal((await store.read()).sessions['session-07'].hidden, false);
+  assert.equal((await store.read()).sessions['session-05'], undefined);
+
+  const result = await service.archiveDone({ ids: ['agent:session-07', 'agent:session-08', 'agent:session-07'] }, api);
+  assert.deepEqual(result, { ok: true, count: 2 });
+  const data = await store.read();
+  assert.equal(data.sessions['session-07'].hidden, true);
+  assert.equal(data.sessions['session-08'].hidden, true);
+});
 test('real installed SDK splits provider/model and forwards workspace and prompt', async () => {
   const calls: Record<string, unknown>[] = [];
   const driver = { createAgent: async (options: Record<string,unknown>) => { calls.push(options); return { id: 'real-sdk-agent' }; } };

@@ -1,5 +1,5 @@
 import type { PaseoApi, PaseoAgent, PaseoWorkspace } from '@getpaseo/client';
-import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
+import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type ArchiveDoneInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
 import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, inboxEntrySchema, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment, type Workspace } from '../shared/model';
 import { Store } from './store';
 import { applyProjectAction, type ProjectAction } from '../shared/projects';
@@ -346,6 +346,21 @@ export class BoardService {
         meta.stageTurn = agent?.lastUserMessageAt ?? null;
         meta.order = lastOrder + index + 1;
       });
+      return { ok: true, count: cards.length };
+    });
+  }
+  async archiveDone(input: ArchiveDoneInput, paseo: PaseoApi) {
+    const ids = [...new Set(input.ids)];
+    return this.store.update(async data => {
+      const cards: Array<{ meta: Metadata; agent?: Agent }> = [];
+      for (let offset = 0; offset < ids.length; offset += agentRefreshConcurrency) {
+        const batch = ids.slice(offset, offset + agentRefreshConcurrency);
+        cards.push(...await Promise.all(batch.map(id => this.metadata(data, id, paseo))));
+      }
+      if (cards.some(({ meta, agent }) => meta.hidden || resolveStage(meta, agent) !== 'done')) {
+        throw new Error('部分任务已不在已完成状态，请刷新看板后重试。');
+      }
+      cards.forEach(({ meta }) => { meta.hidden = true; });
       return { ok: true, count: cards.length };
     });
   }

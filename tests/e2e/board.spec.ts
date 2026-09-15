@@ -611,7 +611,37 @@ test('complete all visible reviewed tasks in one action', async ({ page }) => {
   await expect(page.getByTestId('column-done').getByTestId('card-agent:session-06')).toHaveCount(0);
 });
 
-test('mobile uses explicit move controls and light theme renders', async ({ page }) => {
+test('archive all visible completed tasks in one action', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('搜索任务', { exact: true }).fill('更新组件库');
+  const done = page.getByTestId('column-done');
+  await expect(done.getByRole('button', { name: /^查看任务 / })).toHaveCount(1);
+  await done.getByRole('button', { name: '归档当前筛选的 1 个已完成任务', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('已归档 1 个已完成任务');
+  await expect(done.getByRole('button', { name: /^查看任务 / })).toHaveCount(0);
+  await page.getByRole('button', { name: '清除搜索', exact: true }).click();
+  await expect(done.getByTestId('card-agent:session-08')).toBeVisible();
+  await page.getByRole('button', { name: '查看已收起任务', exact: true }).click();
+  await expect(page.getByTestId('column-done').getByTestId('card-agent:session-07')).toBeVisible();
+});
+
+test('completion preserves dirty edits and cannot close a newly selected card', async ({ page }) => {
+  await page.goto('/?move-delay');
+  await page.getByRole('button', { name: '查看任务 审核工作区导航与搜索交互', exact: true }).click();
+  const detail = page.getByTestId('task-detail-dialog');
+  const title = detail.getByLabel('任务标题', { exact: true });
+  await title.fill('尚未保存的标题');
+  await expect(detail.getByRole('button', { name: '已完成', exact: true })).toBeDisabled();
+  await title.fill('审核工作区导航与搜索交互');
+  await detail.getByRole('button', { name: '已完成', exact: true }).click();
+  await detail.getByRole('button', { name: '关闭详情', exact: true }).click();
+  await page.getByRole('button', { name: '查看任务 补全 API 错误处理测试', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '任务详情：补全 API 错误处理测试', exact: true })).toBeVisible();
+  await page.waitForTimeout(600);
+  await expect(page.getByRole('dialog', { name: '任务详情：补全 API 错误处理测试', exact: true })).toBeVisible();
+});
+
+test('completing a card closes its detail and mobile light theme renders', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?light');
   await page.getByRole('button', { name: '查看任务 为会话增加标签和快捷筛选', exact: true }).click();
@@ -621,7 +651,7 @@ test('mobile uses explicit move controls and light theme renders', async ({ page
   expect(detailBox!.height).toBeLessThanOrEqual(820);
   await expect(detail.getByRole('button', { name: '开始执行', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '已完成', exact: true }).click();
-  await page.getByRole('button', { name: '关闭详情', exact: true }).click();
+  await expect(detail).toHaveCount(0);
   await page.getByLabel('搜索任务', { exact: true }).fill('为会话增加标签');
   const done = page.getByTestId('column-done').getByRole('button', { name: /^查看任务 / });
   await done.scrollIntoViewIfNeeded();

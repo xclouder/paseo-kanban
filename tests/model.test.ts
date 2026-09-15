@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCards, defaultModeId, defaultThinkingOptionId, emptyStore, filterCards, metadataSchema, resolveStage, storeSchema, taskSchema } from '../shared/model';
-import { completeReviewInput, patchInput, createInput } from '../shared/contracts';
+import { archiveDoneInput, completeReviewInput, patchInput, createInput } from '../shared/contracts';
 import { fixture } from '../preview/fixture';
 import { kanbanSettingsSchema } from '../shared/settings';
 
@@ -27,6 +27,7 @@ test('draft patches accept a workspace and newly pasted attachments without addi
 test('batch completion accepts every visible reviewed task without an arbitrary count limit', () => {
   const ids = Array.from({ length: 501 }, (_, index) => `agent:${index}`);
   assert.equal(completeReviewInput.parse({ ids }).ids.length, ids.length);
+  assert.equal(archiveDoneInput.parse({ ids }).ids.length, ids.length);
 });
 test('task launch configuration requires provider/model', () => {
   const input = { clientRequestId: '11111111-1111-4111-8111-111111111111', title: 'task', description: '', workspaceId: 'ws', provider: 'codex', priority: 'medium', tags: [] };

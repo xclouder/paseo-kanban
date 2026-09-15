@@ -47,6 +47,7 @@ const api: BoardApi = {
     persist();
   },
   move: async ({ id, stage, beforeId }) => {
+    if (location.search.includes('move-delay')) await new Promise(resolve => setTimeout(resolve, 500));
     const card = buildCards(data).find(c => c.id === id)!;
     if (stage === 'done' && card.agent && (agentIsRunning(card.agent) || card.agent.pendingPermission)) throw new Error('会话仍在运行或等待授权，请处理后再标记完成。');
     if (stage === 'running' && !card.agent) throw new Error('请在任务详情中点击“开始执行”，启动 Agent。');
@@ -62,6 +63,14 @@ const api: BoardApi = {
     if (targets.some(card => !card || card.stage !== 'review')) throw new Error('部分任务已不在待审核状态，请刷新看板后重试。');
     const lastOrder = Math.max(0, ...cards.map(card => card.order));
     targets.forEach((card, index) => Object.assign(metadata(card!.id), { stage: 'done', stageTurn: card!.agent?.lastUserMessageAt ?? null, order: lastOrder + index + 1 }));
+    persist();
+    return { ok: true, count: targets.length };
+  },
+  archiveDone: async ({ ids }) => {
+    const cards = buildCards(data);
+    const targets = [...new Set(ids)].map(id => cards.find(card => card.id === id));
+    if (targets.some(card => !card || card.hidden || card.stage !== 'done')) throw new Error('部分任务已不在已完成状态，请刷新看板后重试。');
+    targets.forEach(card => { metadata(card!.id).hidden = true; });
     persist();
     return { ok: true, count: targets.length };
   },
