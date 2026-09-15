@@ -65,7 +65,7 @@ const api: BoardApi = {
     persist();
     return { ok: true, count: targets.length };
   },
-  create: async input => { const existing = Object.values(data.store.tasks).find(task => task.createRequestId === input.clientRequestId); if (existing) return existing; if (input.inboxId && !data.store.inbox[input.inboxId]) throw new Error('Inbox 条目已不存在，请刷新后重试。'); const now = new Date().toISOString(); const attachments = (input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` })); const task = taskSchema.parse({ ...input, createRequestId: input.clientRequestId, attachments, id: `task:${crypto.randomUUID()}`, createdAt: now, updatedAt: now, stage: 'todo' }); data.store.tasks[task.id] = task; if (input.inboxId) delete data.store.inbox[input.inboxId]; persist(); return task; },
+  create: async input => { const existing = Object.values(data.store.tasks).find(task => task.createRequestId === input.clientRequestId); if (existing) return existing; const inboxEntry = input.inboxId ? data.store.inbox[input.inboxId] : undefined; if (input.inboxId && !inboxEntry) throw new Error('Inbox 条目已不存在，请刷新后重试。'); const now = new Date().toISOString(); const attachments = [...(inboxEntry?.attachments ?? []), ...(input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` }))]; const task = taskSchema.parse({ ...input, createRequestId: input.clientRequestId, attachments, id: `task:${crypto.randomUUID()}`, createdAt: now, updatedAt: now, stage: 'todo' }); data.store.tasks[task.id] = task; if (input.inboxId) delete data.store.inbox[input.inboxId]; persist(); return task; },
   removeInbox: async ({ id }) => { if (!data.store.inbox[id]) throw new Error('Inbox 条目不存在，请刷新后重试。'); delete data.store.inbox[id]; persist(); },
   launch: async ({ id }) => {
     if (location.search.includes('launch-error')) throw new Error('Agent 启动失败，请稍后重试。');
@@ -101,7 +101,7 @@ function App() {
     return () => document.removeEventListener('keydown', toggleSidebar);
   }, []);
   useEffect(() => installQuickInbox(async input => {
-    data.store.inbox[input.clientRequestId] ??= { id: input.clientRequestId, title: input.title, createdAt: new Date().toISOString() };
+    data.store.inbox[input.clientRequestId] ??= { id: input.clientRequestId, title: input.title, attachments: (input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-inbox-attachment://${attachment.id}` })), createdAt: new Date().toISOString() };
     persist();
     await qc.invalidateQueries({ queryKey: ['paseo-kanban', 'preview'] });
   }), []);

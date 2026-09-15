@@ -36,7 +36,7 @@ export function fixture(): Snapshot {
     store: {
       version: 1,
       inbox: {
-        '11111111-1111-4111-8111-111111111111': { id: '11111111-1111-4111-8111-111111111111', title: '整理下周迭代要处理的体验问题', createdAt: time(18) },
+        '11111111-1111-4111-8111-111111111111': { id: '11111111-1111-4111-8111-111111111111', title: '整理下周迭代要处理的体验问题', createdAt: time(18), attachments: [] },
       },
       projectLayout: { groups: [], order: [], membership: {} },
       settings: { projectBaseDirectory: 'J:\\ai-ideas' },

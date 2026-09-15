@@ -10,8 +10,8 @@ import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, fil
 import { organizeProjects } from '../shared/contracts';
 import type { ProjectAction } from '../shared/projects';
 import { ProjectSidebar } from './project-sidebar';
-import { INBOX_CHANGED_EVENT, QUICK_INBOX_MODAL_TEST_ID, setQuickInboxPalette } from './quick-inbox';
-import { BOARD_KEYBOARD_SCOPE_TEST_ID_PREFIX, isActiveBoardKeyboardScope } from './board-shortcut';
+import { INBOX_CHANGED_EVENT, QUICK_INBOX_MODAL_TEST_ID, openQuickInbox, setQuickInboxPalette } from './quick-inbox';
+import { BOARD_KEYBOARD_SCOPE_TEST_ID_PREFIX, isActiveBoardKeyboardScope, isOpenBoardShortcut } from './board-shortcut';
 
 export interface BoardApi {
   organize(action: ProjectAction): Promise<unknown>;
@@ -224,7 +224,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const [selected, setSelected] = useState<string | null>(null);
   const [inboxView, setInboxView] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [createSource, setCreateSource] = useState<{ id: string; title: string } | null>(null);
+  const [createSource, setCreateSource] = useState<InboxEntry | null>(null);
   const [createDirty, setCreateDirty] = useState(false);
   const [confirmingCreateClose, setConfirmingCreateClose] = useState(false);
   const [createCloseBlocked, setCreateCloseBlocked] = useState(false);
@@ -253,7 +253,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const changeCreateDirty = (dirty: boolean) => { createDirtyRef.current = dirty; setCreateDirty(dirty); };
   const hideCreateConfirmation = () => { confirmingCreateCloseRef.current = false; setConfirmingCreateClose(false); };
   const changeCreateCloseBlocked = (blocked: boolean) => { createCloseBlockedRef.current = blocked; setCreateCloseBlocked(blocked); };
-  const openCreate = (source?: { id: string; title: string }) => { setCreateSource(source ?? null); changeCreateDirty(false); changeCreateCloseBlocked(false); hideCreateConfirmation(); creatingRef.current = true; setCreating(true); };
+  const openCreate = (source?: InboxEntry) => { setCreateSource(source ?? null); changeCreateDirty(false); changeCreateCloseBlocked(false); hideCreateConfirmation(); creatingRef.current = true; setCreating(true); };
   const requestCreateClose = () => {
     if (mutationPendingRef.current || createCloseBlockedRef.current) return;
     if (createDirtyRef.current) { confirmingCreateCloseRef.current = true; setConfirmingCreateClose(true); }
@@ -278,6 +278,10 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     const onKey = (event: KeyboardEvent) => {
       if (!isActiveBoardKeyboardScope(keyboardScopeTestId)) return;
       if (document.querySelector(`[data-testid="${QUICK_INBOX_MODAL_TEST_ID}"]`)) return;
+      if (event.type === 'keydown' && inboxView && isOpenBoardShortcut(event)) {
+        event.preventDefault(); event.stopImmediatePropagation(); reset();
+        return;
+      }
       if (event.key === 'Escape' && event.type === 'keyup' && handledCreateEscapeRef.current) {
         event.preventDefault(); event.stopImmediatePropagation(); handledCreateEscapeRef.current = false;
         return;
@@ -301,7 +305,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', onKey, true);
     return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKey, true); };
-  }, [keyboardScopeTestId, layout.platform, selected]);
+  }, [inboxView, keyboardScopeTestId, layout.platform, selected]);
   useEffect(() => {
     if (layout.platform !== 'web' || typeof document === 'undefined') return;
     const refreshInbox = () => { void board.refetch(); };
@@ -439,7 +443,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
               {!layout.compact && <Text style={{ color: c.foregroundMuted, fontSize: 12, marginTop: 8 }}>{inboxView ? '快速收集想法，准备好后再补全信息并创建任务。' : '从想法到交付，把每一段会话放回工作流。'}</Text>}
             </View>
             <Button c={c} icon={inboxView ? 'LayoutGrid' : 'Inbox'} active={inboxView} onPress={() => { if (inboxView) reset(); else { reset(); setInboxView(true); } }}>{inboxView ? '返回看板' : 'Inbox'}</Button>
-            <Button c={c} primary icon="Plus" onPress={() => openCreate()} disabled={busy}>新建任务</Button>
+            <Button c={c} primary icon="Plus" onPress={() => inboxView && layout.platform === 'web' ? openQuickInbox() : openCreate()} disabled={busy}>{inboxView && layout.platform === 'web' ? '新建想法' : '新建任务'}</Button>
           </View>
           {!inboxView && <View style={{ ...wrap, gap: 10 }}>
             <View style={{ ...row, flexGrow: 1, flexShrink: 1, minWidth: 190, maxWidth: 400, gap: 9, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1, borderRadius: 7, paddingHorizontal: 11 }}>
@@ -502,7 +506,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     <Modal visible={creating} transparent animationType="fade" onRequestClose={requestCreateClose}>
       <View style={{ flex: 1, backgroundColor: c.surface0, alignItems: 'center', justifyContent: 'center', padding: layout.compact ? 12 : 28 }}>
         <View style={{ width: '100%', maxWidth: 560, maxHeight: '95%', backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 14, overflow: 'hidden' }}>
-          {creating && <CreateForm c={c} snapshot={board.data} workspaceId={workspaceId} projectId={project} web={layout.platform === 'web'} shortcutEnabled={!confirmingCreateClose} busy={busy} defaultModel={defaultModel} projectBaseDirectory={projectBaseDirectory} initialTitle={createSource?.title} inboxId={createSource?.id} setDefaultModel={saveDefaultModel} onDirtyChange={changeCreateDirty} onCloseBlockedChange={changeCreateCloseBlocked} close={requestCreateClose} createProject={async input => await mutation.mutateAsync(() => api.createProject(input)) as Workspace} create={async input => { let task: Task | undefined; const ok = await run(async () => { task = await api.create(input); }); if (ok && task) { reset(); changeCreateDirty(false); changeCreateCloseBlocked(false); setCreateSource(null); setSelected(task.id); creatingRef.current = false; setCreating(false); } return ok; }} />}
+          {creating && <CreateForm c={c} snapshot={board.data} workspaceId={workspaceId} projectId={project} web={layout.platform === 'web'} shortcutEnabled={!confirmingCreateClose} busy={busy} defaultModel={defaultModel} projectBaseDirectory={projectBaseDirectory} initialTitle={createSource?.title} initialAttachments={createSource?.attachments} inboxId={createSource?.id} setDefaultModel={saveDefaultModel} onDirtyChange={changeCreateDirty} onCloseBlockedChange={changeCreateCloseBlocked} close={requestCreateClose} createProject={async input => await mutation.mutateAsync(() => api.createProject(input)) as Workspace} create={async input => { let task: Task | undefined; const ok = await run(async () => { task = await api.create(input); }); if (ok && task) { reset(); changeCreateDirty(false); changeCreateCloseBlocked(false); setCreateSource(null); setSelected(task.id); creatingRef.current = false; setCreating(false); } return ok; }} />}
         </View>
       </View>
     </Modal>
@@ -522,7 +526,7 @@ function InboxPanel({ c, entries, busy, createTask, remove }: { c: Colors; entri
       <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>在 Paseo 任意位置按 Ctrl+Shift+I 快速记下一项。</Text>
     </View> : sorted.map(entry => <View key={entry.id} testID={`inbox-entry-${entry.id}`} style={{ ...row, gap: 14, padding: 15, borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.surface1 }}>
       <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>
-      <View style={{ flex: 1, minWidth: 0 }}><Text style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}</Text></View>
+      <View style={{ flex: 1, minWidth: 0 }}><Text style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View>
       <Button c={c} small primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button>
       <Button c={c} small icon="Trash2" disabled={busy} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
         if (confirmDelete !== entry.id) { setConfirmDelete(entry.id); return; }
@@ -591,7 +595,7 @@ function WorkspacePicker({ c, workspaces, value, disabled, projectBaseDirectory 
       {!disabled && (workspaces.length > 0 || onCreateProject) && <Icon name="ChevronRight" size={15} color={c.foregroundMuted} />}
     </Pressable>
     <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
-      <View testID="workspace-subpanel" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'center', padding: 18 }}>
+      <View testID="workspace-subpanel" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 18, paddingTop: 48, paddingBottom: 18 }}>
         <View accessibilityLabel="选择工作区" style={{ width: '100%', maxWidth: 520, maxHeight: '82%', backgroundColor: c.surface1, borderWidth: 1, borderColor: c.border, borderRadius: 12, overflow: 'hidden' }}>
           <View style={{ ...row, gap: 9, padding: 18, borderBottomWidth: 1, borderBottomColor: c.border }}><Icon name="FolderOpen" size={17} color={c.accent} /><Text accessibilityRole="header" style={{ flex: 1, color: c.foreground, fontSize: 16, fontWeight: '600' }}>{view === 'new' ? '新建项目与工作区' : '选择工作区'}</Text><Button c={c} small icon="X" label="关闭工作区选择" disabled={creatingProject} onPress={close} /></View>
           {onCreateProject && <View style={{ ...row, gap: 8, paddingHorizontal: 14, paddingTop: 14 }}><Button c={c} small active={view === 'existing'} onPress={() => { setView('existing'); setCreateError(''); }}>已有工作区</Button><Button c={c} small active={view === 'new'} onPress={() => { setView('new'); setCreateError(''); }}>新建项目</Button></View>}
@@ -750,10 +754,12 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, navigation, notice
   </>;
 }
 
-function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled, busy, defaultModel, projectBaseDirectory, initialTitle = '', inboxId, setDefaultModel, onDirtyChange, onCloseBlockedChange, close, createProject, create }: { c: Colors; snapshot?: Snapshot; workspaceId?: string; projectId: string; web: boolean; shortcutEnabled: boolean; busy: boolean; defaultModel: string; projectBaseDirectory: string; initialTitle?: string; inboxId?: string; setDefaultModel(model: string): void; onDirtyChange(dirty: boolean): void; onCloseBlockedChange(blocked: boolean): void; close(): void; createProject(input: CreateProjectWorkspaceInput): Promise<Workspace>; create(input: CreateInput): Promise<boolean> }) {
+function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled, busy, defaultModel, projectBaseDirectory, initialTitle = '', initialAttachments = [], inboxId, setDefaultModel, onDirtyChange, onCloseBlockedChange, close, createProject, create }: { c: Colors; snapshot?: Snapshot; workspaceId?: string; projectId: string; web: boolean; shortcutEnabled: boolean; busy: boolean; defaultModel: string; projectBaseDirectory: string; initialTitle?: string; initialAttachments?: TaskAttachment[]; inboxId?: string; setDefaultModel(model: string): void; onDirtyChange(dirty: boolean): void; onCloseBlockedChange(blocked: boolean): void; close(): void; createProject(input: CreateProjectWorkspaceInput): Promise<Workspace>; create(input: CreateInput): Promise<boolean> }) {
   const [clientRequestId] = useState(clientUuid);
-  const [title, setTitle] = useState(initialTitle), [description, setDescription] = useState(''), [tags, setTags] = useState('');
+  const initialDescription = inboxId ? initialTitle : '';
+  const [title, setTitle] = useState(initialTitle), [description, setDescription] = useState(initialDescription), [tags, setTags] = useState('');
   const [attachments, setAttachments] = useState<CreateAttachmentInput[]>([]);
+  const initialAttachmentSize = initialAttachments.reduce((sum, attachment) => sum + attachment.size, 0);
   const initialWorkspace = useRef(workspaceId ?? snapshot?.workspaces.find(w => !projectId || w.projectId === projectId)?.id ?? '').current;
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [createdWorkspaces, setCreatedWorkspaces] = useState<Workspace[]>([]);
@@ -786,8 +792,8 @@ function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled,
     if (!ok) { onCloseBlockedChange(false); setError('创建失败，任务尚未保存。请关闭弹窗查看错误详情后重试。'); setSubmitting(false); }
   };
   useEffect(() => {
-    onDirtyChange(Boolean(title !== initialTitle || description || tags || attachments.length || workspace !== initialWorkspace || provider !== initialProvider || modeId !== initialModeId || thinkingOptionId !== initialThinkingOptionId || priority !== 'medium'));
-  }, [attachments.length, description, initialModeId, initialProvider, initialThinkingOptionId, initialTitle, initialWorkspace, modeId, onDirtyChange, priority, provider, tags, thinkingOptionId, title, workspace]);
+    onDirtyChange(Boolean(title !== initialTitle || description !== initialDescription || tags || attachments.length || workspace !== initialWorkspace || provider !== initialProvider || modeId !== initialModeId || thinkingOptionId !== initialThinkingOptionId || priority !== 'medium'));
+  }, [attachments.length, description, initialDescription, initialModeId, initialProvider, initialThinkingOptionId, initialTitle, initialWorkspace, modeId, onDirtyChange, priority, provider, tags, thinkingOptionId, title, workspace]);
   useEffect(() => {
     if (!web || !shortcutEnabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -805,8 +811,9 @@ function CreateForm({ c, snapshot, workspaceId, projectId, web, shortcutEnabled,
     <ScrollView contentContainerStyle={{ padding: 22 }}>
       <Input c={c} label="任务标题" value={title} onChangeText={value => { onDirtyChange(true); setTitle(value); }} placeholder="这次想完成什么？" />
       <Input c={c} label="任务说明" value={description} onChangeText={value => { onDirtyChange(true); setDescription(value); }} multiline placeholder="目标、涉及的文件，以及怎样才算完成…" />
-      <Label c={c}>图片与文件</Label>
-      {web ? <AttachmentPicker c={c} attachments={attachments} disabled={busy || submitting} onChange={value => { onDirtyChange(true); setAttachments(value); }} onError={setError} onReadingChange={reading => { onCloseBlockedChange(reading || submitting); setReadingAttachments(reading); }} /> : <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: 18 }}>请在桌面端拖拽或选择附件。</Text>}
+      <Label c={c}>图片与文件 · {initialAttachments.length + attachments.length}</Label>
+      {initialAttachments.length > 0 && <StoredAttachments c={c} attachments={initialAttachments} />}
+      {web ? <AttachmentPicker c={c} attachments={attachments} existingCount={initialAttachments.length} existingSize={initialAttachmentSize} disabled={busy || submitting} onChange={value => { onDirtyChange(true); setAttachments(value); }} onError={setError} onReadingChange={reading => { onCloseBlockedChange(reading || submitting); setReadingAttachments(reading); }} /> : <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: 18 }}>请在桌面端拖拽或选择附件。</Text>}
       <Label c={c}>工作区</Label>
       <WorkspacePicker c={c} workspaces={selectableWorkspaces} value={workspace} disabled={busy || submitting} projectBaseDirectory={projectBaseDirectory} onCreateProject={async projectName => { const created = await createProject({ projectName }); setCreatedWorkspaces(current => [...current.filter(item => item.id !== created.id), created]); return created; }} onChange={id => { onDirtyChange(true); setWorkspace(id); }} />
       {!snapshot?.workspaces.length && !projectBaseDirectory && <Text style={{ color: c.statusWarning, fontSize: 12, marginBottom: 15 }}>请先在 Paseo 中创建工作区，或在插件设置中配置项目基础目录。</Text>}

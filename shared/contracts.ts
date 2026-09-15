@@ -43,7 +43,11 @@ export const createProjectWorkspaceInput = z.object({
 export const createProjectWorkspace = defineRpc({ name: 'board.project.create-workspace', input: createProjectWorkspaceInput, output: workspaceSchema });
 export const readKanbanSettings = defineRpc({ name: 'board.settings.read', input: z.object({}), output: kanbanSettingsSchema });
 export const saveKanbanSettings = defineRpc({ name: 'board.settings.save', input: kanbanSettingsSchema, output: kanbanSettingsSchema });
-export const addInboxInput = z.object({ clientRequestId: z.string().uuid(), title: z.string().trim().min(1).max(180) });
+export const addInboxInput = z.object({
+  clientRequestId: z.string().uuid(),
+  title: z.string().trim().min(1).max(180),
+  attachments: z.array(createAttachmentInput).max(MAX_ATTACHMENT_FILES).default([]),
+});
 export const addInboxEntry = defineRpc({ name: 'board.inbox.add', input: addInboxInput, output: inboxEntrySchema });
 export const deleteInboxEntry = defineRpc({ name: 'board.inbox.delete', input: z.object({ id: z.string().uuid() }), output: z.object({ ok: z.boolean() }) });
 export const launchTask = defineRpc({ name: 'board.launch', input: z.object({ id: z.string().min(1) }), output: z.object({ agentId: z.string() }) });
@@ -53,5 +57,5 @@ export type MoveInput = z.infer<typeof moveInput>;
 export type CompleteReviewInput = z.infer<typeof completeReviewInput>;
 export type CreateInput = z.input<typeof createInput>;
 export type CreateProjectWorkspaceInput = z.infer<typeof createProjectWorkspaceInput>;
-export type AddInboxInput = z.infer<typeof addInboxInput>;
+export type AddInboxInput = z.input<typeof addInboxInput>;
 export type CreateAttachmentInput = z.infer<typeof createAttachmentInput>;

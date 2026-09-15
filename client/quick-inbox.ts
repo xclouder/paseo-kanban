@@ -1,5 +1,12 @@
+import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CreateAttachmentInput } from '../shared/contracts';
+
 export const INBOX_CHANGED_EVENT = 'paseo-kanban:inbox-changed';
 export const QUICK_INBOX_MODAL_TEST_ID = 'quick-inbox-modal';
+export const OPEN_QUICK_INBOX_EVENT = 'paseo-kanban:open-quick-inbox';
+
+export function openQuickInbox(ownerDocument: Document | undefined = typeof document === 'undefined' ? undefined : document) {
+  ownerDocument?.dispatchEvent(new Event(OPEN_QUICK_INBOX_EVENT));
+}
 
 export interface QuickInboxPalette {
   surface0: string;
@@ -107,13 +114,40 @@ export function registerOpenInboxShortcut(openInbox: () => void, target: EventTa
   return () => target.removeEventListener('keydown', onKeyDown, options);
 }
 
+function formatBytes(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readAttachment(file: File): Promise<CreateAttachmentInput> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`无法读取附件 ${file.name || '未命名文件'}。`));
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? '');
+      const separator = dataUrl.indexOf(',');
+      if (separator < 0) { reject(new Error(`无法读取附件 ${file.name || '未命名文件'}。`)); return; }
+      resolve({
+        id: crypto.randomUUID(),
+        fileName: file.name || '粘贴的文件',
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size,
+        dataBase64: dataUrl.slice(separator + 1),
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export function installQuickInbox(
-  save: (input: { clientRequestId: string; title: string }) => Promise<unknown>,
+  save: (input: AddInboxInput) => Promise<unknown>,
   ownerDocument: Document | undefined = typeof document === 'undefined' ? undefined : document,
 ) {
   if (!ownerDocument) return () => {};
   let overlay: HTMLDivElement | null = null;
   let saving = false;
+  let readingAttachments = false;
   let restoreFocus: HTMLElement | null = null;
   let inertBackground: Array<{ element: HTMLElement; inert: boolean }> = [];
 
@@ -125,13 +159,15 @@ export function installQuickInbox(
     if (restoreFocus?.isConnected) restoreFocus.focus();
     restoreFocus = null;
   };
-  const close = () => { if (!saving) dismiss(); };
+  const close = () => { if (!saving && !readingAttachments) dismiss(); };
   const open = () => {
     if (overlay) {
       overlay.querySelector<HTMLInputElement>('input')?.focus();
       return;
     }
     const requestId = crypto.randomUUID();
+    let attachments: CreateAttachmentInput[] = [];
+    readingAttachments = false;
     const palette = resolvePalette(ownerDocument);
     restoreFocus = ownerDocument.activeElement instanceof HTMLElement ? ownerDocument.activeElement : null;
     overlay = ownerDocument.createElement('div');
@@ -145,11 +181,16 @@ export function installQuickInbox(
     dialog.innerHTML = `
       <div data-role="header" style="display:flex;align-items:center;gap:12px">
         <div data-role="icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16l2 10v6H2v-6Z"/><path d="M2 14h6l2 3h4l2-3h6"/></svg></div>
-        <div style="flex:1;min-width:0"><h2 id="paseo-kanban-quick-inbox-title" style="margin:0;font-size:18px;line-height:1.4;font-weight:600">快速添加到 Inbox</h2><p data-role="subtitle" style="margin:5px 0 0;font-size:11px;line-height:17px">先记下任务名称，稍后在看板中补充工作区和执行设置。</p></div>
+        <div style="flex:1;min-width:0"><h2 id="paseo-kanban-quick-inbox-title" style="margin:0;font-size:18px;line-height:1.4;font-weight:600">快速添加到 Inbox</h2><p data-role="subtitle" style="margin:5px 0 0;font-size:11px;line-height:17px">先记下想法，稍后在看板中补充工作区和执行设置。</p></div>
         <kbd data-role="shortcut">Ctrl+Shift+I</kbd>
       </div>
       <label for="paseo-kanban-quick-inbox-input" style="display:block;margin:18px 0 8px;font-size:11px;font-weight:600">任务名称</label>
       <input id="paseo-kanban-quick-inbox-input" maxlength="180" autocomplete="off" placeholder="需要完成什么？" />
+      <div data-role="paste-area" tabindex="0" style="box-sizing:border-box;margin-top:12px;padding:11px;border:1px dashed ${palette.border};border-radius:7px;background:${palette.surface0};outline:none">
+        <div style="font-size:11px;font-weight:600">粘贴图片或文件</div>
+        <div data-role="paste-hint" style="margin-top:4px;color:${palette.foregroundMuted};font-size:10px">支持 Ctrl/⌘ + V · 最多 10 个，单个 20 MB，总计 50 MB</div>
+        <div data-role="attachments" style="display:flex;flex-direction:column;gap:7px"></div>
+      </div>
       <div data-role="error" role="alert" style="display:none;margin-top:9px;font-size:11px"></div>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:9px;margin-top:18px">
         <button data-role="cancel" type="button">取消</button>
@@ -159,6 +200,8 @@ export function installQuickInbox(
     const cancel = dialog.querySelector<HTMLButtonElement>('[data-role="cancel"]')!;
     const submit = dialog.querySelector<HTMLButtonElement>('[data-role="save"]')!;
     const error = dialog.querySelector<HTMLDivElement>('[data-role="error"]')!;
+    const pasteHint = dialog.querySelector<HTMLDivElement>('[data-role="paste-hint"]')!;
+    const attachmentList = dialog.querySelector<HTMLDivElement>('[data-role="attachments"]')!;
     const icon = dialog.querySelector<HTMLDivElement>('[data-role="icon"]')!;
     const shortcut = dialog.querySelector<HTMLElement>('[data-role="shortcut"]')!;
     const subtitle = dialog.querySelector<HTMLElement>('[data-role="subtitle"]')!;
@@ -169,6 +212,43 @@ export function installQuickInbox(
     shortcut.style.cssText = `padding:5px 7px;border:1px solid ${palette.border};border-radius:5px;background:${palette.surface0};color:${palette.foregroundMuted};font:10px ui-monospace,monospace;white-space:nowrap;`;
     subtitle.style.color = palette.foregroundMuted;
     error.style.color = palette.statusDanger;
+    const renderAttachments = () => {
+      attachmentList.replaceChildren();
+      pasteHint.textContent = readingAttachments ? '正在读取附件…' : '支持 Ctrl/⌘ + V · 最多 10 个，单个 20 MB，总计 50 MB';
+      for (const attachment of attachments) {
+        const item = ownerDocument.createElement('div');
+        item.style.cssText = `display:flex;align-items:center;gap:8px;margin-top:7px;padding-top:7px;border-top:1px solid ${palette.border};font-size:10px;`;
+        const name = ownerDocument.createElement('span');
+        name.textContent = attachment.fileName;
+        name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        const size = ownerDocument.createElement('span');
+        size.textContent = formatBytes(attachment.size);
+        size.style.color = palette.foregroundMuted;
+        const remove = ownerDocument.createElement('button');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', `移除附件 ${attachment.fileName}`);
+        remove.textContent = '移除';
+        remove.disabled = saving || readingAttachments;
+        remove.style.cssText = `padding:3px 7px;border:1px solid ${palette.border};border-radius:5px;background:${palette.surface1};color:${palette.foreground};font:10px inherit;cursor:pointer;`;
+        remove.addEventListener('click', () => { attachments = attachments.filter(item => item.id !== attachment.id); renderAttachments(); });
+        item.append(name, size, remove);
+        attachmentList.appendChild(item);
+      }
+    };
+    const addFiles = async (files: File[]) => {
+      if (!files.length || saving || readingAttachments) return;
+      if (attachments.length + files.length > MAX_ATTACHMENT_FILES) {
+        error.textContent = `最多添加 ${MAX_ATTACHMENT_FILES} 个附件。`; error.style.display = 'block'; return;
+      }
+      const oversized = files.find(file => file.size > MAX_ATTACHMENT_SIZE);
+      if (oversized) { error.textContent = `${oversized.name} 超过 20 MB，无法添加。`; error.style.display = 'block'; return; }
+      const total = attachments.reduce((sum, attachment) => sum + attachment.size, 0) + files.reduce((sum, file) => sum + file.size, 0);
+      if (total > MAX_ATTACHMENT_TOTAL_SIZE) { error.textContent = '附件总大小不能超过 50 MB。'; error.style.display = 'block'; return; }
+      readingAttachments = true; submit.disabled = true; error.style.display = 'none'; renderAttachments();
+      try { attachments = [...attachments, ...await Promise.all(files.map(readAttachment))]; }
+      catch (cause) { error.textContent = cause instanceof Error ? cause.message : String(cause); error.style.display = 'block'; }
+      finally { readingAttachments = false; submit.disabled = false; renderAttachments(); }
+    };
     input.addEventListener('focus', () => { input.style.borderColor = palette.accent; });
     input.addEventListener('blur', () => { input.style.borderColor = palette.border; });
     overlay.appendChild(dialog);
@@ -182,13 +262,19 @@ export function installQuickInbox(
     dialog.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); close(); }
       if (event.key === 'Tab') {
-        const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('input:not([disabled]), button:not([disabled])'));
+        const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('input:not([disabled]), [tabindex="0"], button:not([disabled])'));
         if (!focusable.length) { event.preventDefault(); return; }
         const index = focusable.indexOf(ownerDocument.activeElement as HTMLElement);
         const next = event.shiftKey ? (index <= 0 ? focusable.length - 1 : index - 1) : (index < 0 || index === focusable.length - 1 ? 0 : index + 1);
         event.preventDefault();
         focusable[next].focus();
       }
+    });
+    dialog.addEventListener('paste', event => {
+      const files = Array.from(event.clipboardData?.files ?? []);
+      if (!files.length) return;
+      event.preventDefault();
+      void addFiles(files);
     });
     dialog.addEventListener('submit', async event => {
       event.preventDefault();
@@ -199,7 +285,7 @@ export function installQuickInbox(
         input.focus();
         return;
       }
-      if (saving) return;
+      if (saving || readingAttachments) return;
       saving = true;
       input.disabled = cancel.disabled = submit.disabled = true;
       dialog.tabIndex = -1;
@@ -207,7 +293,7 @@ export function installQuickInbox(
       submit.textContent = '正在保存…';
       error.style.display = 'none';
       try {
-        await save({ clientRequestId: requestId, title });
+        await save({ clientRequestId: requestId, title, attachments });
         saving = false;
         dismiss();
         ownerDocument.dispatchEvent(new Event(INBOX_CHANGED_EVENT));
@@ -223,9 +309,12 @@ export function installQuickInbox(
     input.focus();
   };
   const unregister = registerOpenInboxShortcut(open, ownerDocument);
+  ownerDocument.addEventListener(OPEN_QUICK_INBOX_EVENT, open);
   return () => {
     unregister();
+    ownerDocument.removeEventListener(OPEN_QUICK_INBOX_EVENT, open);
     saving = false;
+    readingAttachments = false;
     dismiss();
   };
 }

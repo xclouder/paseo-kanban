@@ -5,7 +5,7 @@ import { Store } from './store';
 import { applyProjectAction, type ProjectAction } from '../shared/projects';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, lstat, mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, lstat, mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { kanbanSettingsSchema, type KanbanSettings } from '../shared/settings';
 
@@ -89,7 +89,8 @@ export class BoardService {
     const managedKey = '(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{64})';
     const canonicalPattern = new RegExp(`^${managedKey}$`, 'i');
     const deletingPattern = new RegExp(`^(${managedKey})\\.deleting-[0-9a-f-]{36}$`, 'i');
-    const active = new Set(Object.keys(data.tasks).map(taskId => this.attachmentKey(taskId).toLowerCase()));
+    const activeOwners = [...Object.keys(data.tasks), ...Object.keys(data.inbox).map(id => `inbox:${id}`)];
+    const active = new Set(activeOwners.map(ownerId => this.attachmentKey(ownerId).toLowerCase()));
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const source = join(this.attachmentRoot(), entry.name);
@@ -139,6 +140,20 @@ export class BoardService {
       await Promise.all(cleanup.map(path => rm(path, { force: true }).catch(() => undefined)));
       throw error;
     }
+  }
+  private async copyAttachments(ownerId: string, taskId: string, attachments: TaskAttachment[]): Promise<TaskAttachment[]> {
+    if (!attachments.length) return [];
+    const sourceDirectory = resolve(this.attachmentDirectory(ownerId));
+    const targetDirectory = this.attachmentDirectory(taskId);
+    await mkdir(targetDirectory, { recursive: true, mode: 0o700 });
+    return Promise.all(attachments.map(async attachment => {
+      const source = resolve(attachment.path);
+      const sameDirectory = process.platform === 'win32' ? dirname(source).toLowerCase() === sourceDirectory.toLowerCase() : dirname(source) === sourceDirectory;
+      if (!sameDirectory) throw new Error('Inbox 附件路径无效，请删除该想法后重试。');
+      const target = join(targetDirectory, `${attachment.id}${extname(source)}`);
+      await copyFile(source, target, constants.COPYFILE_EXCL);
+      return { ...attachment, path: target };
+    }));
   }
   private providerCache?: { time: number; value: Pick<Snapshot, 'providers' | 'models' | 'modes' | 'providerError'> };
   private providerLatest?: Pick<Snapshot, 'providers' | 'models' | 'modes' | 'providerError'>;
@@ -335,18 +350,44 @@ export class BoardService {
     });
   }
   async addInbox(input: AddInboxInput) {
-    return this.store.update(data => {
+    return this.store.exclusive(async () => {
+      const data = await this.store.read();
       const existing = data.inbox[input.clientRequestId];
       if (existing) return existing;
-      const entry = inboxEntrySchema.parse({ id: input.clientRequestId, title: input.title, createdAt: new Date().toISOString() });
-      data.inbox[entry.id] = entry;
-      return entry;
+      try {
+        const attachments = await this.saveAttachments(`inbox:${input.clientRequestId}`, input.attachments ?? []);
+        const entry = inboxEntrySchema.parse({ id: input.clientRequestId, title: input.title, attachments, createdAt: new Date().toISOString() });
+        data.inbox[entry.id] = entry;
+        await this.store.write(data);
+        return entry;
+      } catch (error) {
+        await rm(this.attachmentDirectory(`inbox:${input.clientRequestId}`), { recursive: true, force: true }).catch(() => undefined);
+        throw error;
+      }
     });
   }
   async deleteInbox(id: string) {
-    return this.store.update(data => {
-      if (!data.inbox[id]) throw new Error('Inbox 条目不存在，请刷新后重试。');
+    return this.store.exclusive(async () => {
+      const data = await this.store.read();
+      const entry = data.inbox[id];
+      if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。');
+      const directory = this.attachmentDirectory(`inbox:${id}`);
+      const trash = `${directory}.deleting-${randomUUID()}`;
+      let moved = false;
+      try {
+        await rename(directory, trash);
+        moved = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
       delete data.inbox[id];
+      try {
+        await this.store.write(data);
+      } catch (error) {
+        if (moved) await rename(trash, directory).catch(() => undefined);
+        throw error;
+      }
+      if (moved) await rm(trash, { recursive: true, force: true }).catch(() => undefined);
       return { ok: true };
     });
   }
@@ -378,16 +419,20 @@ export class BoardService {
       const data = await this.store.read();
       const existing = Object.values(data.tasks).find(task => task.createRequestId === input.clientRequestId);
       if (existing) return existing;
-      if (input.inboxId && !data.inbox[input.inboxId]) throw new Error('Inbox 条目已不存在，请刷新后重试。');
+      const inboxEntry = input.inboxId ? data.inbox[input.inboxId] : undefined;
+      if (input.inboxId && !inboxEntry) throw new Error('Inbox 条目已不存在，请刷新后重试。');
       const now = new Date().toISOString();
       const taskId = `task:${randomUUID()}`;
       const { attachments = [], clientRequestId, inboxId, ...fields } = input;
       try {
-        const storedAttachments = await this.saveAttachments(taskId, attachments);
-        const task = taskSchema.parse({ ...fields, modeId, thinkingOptionId, createRequestId: clientRequestId, attachments: storedAttachments, id: taskId, createdAt: now, updatedAt: now, stage: 'todo' });
+        const inheritedAttachments = inboxEntry?.attachments ?? [];
+        const storedAttachments = await this.saveAttachments(taskId, attachments, inheritedAttachments);
+        const copiedAttachments = inboxId ? await this.copyAttachments(`inbox:${inboxId}`, taskId, inheritedAttachments) : [];
+        const task = taskSchema.parse({ ...fields, modeId, thinkingOptionId, createRequestId: clientRequestId, attachments: [...copiedAttachments, ...storedAttachments], id: taskId, createdAt: now, updatedAt: now, stage: 'todo' });
         data.tasks[task.id] = task;
         if (inboxId) delete data.inbox[inboxId];
         await this.store.write(data);
+        if (inboxId) await rm(this.attachmentDirectory(`inbox:${inboxId}`), { recursive: true, force: true }).catch(() => undefined);
         return task;
       } catch (error) {
         await rm(this.attachmentDirectory(taskId), { recursive: true, force: true }).catch(() => undefined);

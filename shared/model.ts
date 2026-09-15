@@ -42,6 +42,7 @@ export const inboxEntrySchema = z.object({
   id: z.string().uuid(),
   title: z.string().trim().min(1).max(180),
   createdAt: z.string(),
+  attachments: z.array(taskAttachmentSchema).default([]),
 });
 export type InboxEntry = z.infer<typeof inboxEntrySchema>;
 export const storeSchema = z.object({

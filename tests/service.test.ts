@@ -203,21 +203,43 @@ test('create is a draft; concurrent launch invokes provider exactly once', async
 });
 test('Inbox capture is idempotent and conversion removes the entry only after task creation', async t => {
   const { service, store } = await setup(t); const mock = mockApi();
-  const entryInput = { clientRequestId: '51515151-5151-4151-8151-515151515151', title: 'Capture this idea' };
+  const contents = Buffer.from('idea attachment');
+  const entryInput = { clientRequestId: '51515151-5151-4151-8151-515151515151', title: 'Capture this idea', attachments: [{ id: '50505050-5050-4050-8050-505050505050', fileName: 'idea.txt', mimeType: 'text/plain', size: contents.byteLength, dataBase64: contents.toString('base64') }] };
   const first = await service.addInbox(entryInput);
   const retry = await service.addInbox(entryInput);
   assert.deepEqual(retry, first);
+  assert.equal(first.attachments.length, 1);
+  assert.equal(await readFile(first.attachments[0].path, 'utf8'), 'idea attachment');
   assert.equal(Object.keys((await store.read()).inbox).length, 1);
+  await service.read(mock.api);
+  assert.equal(await readFile(first.attachments[0].path, 'utf8'), 'idea attachment');
 
   const task = await service.create({ ...input, clientRequestId: '52525252-5252-4252-8252-525252525252', inboxId: first.id, title: first.title }, mock.api);
   const converted = await store.read();
   assert.equal(converted.inbox[first.id], undefined);
   assert.equal(converted.tasks[task.id].title, first.title);
+  assert.equal(task.attachments.length, 1);
+  assert.equal(await readFile(task.attachments[0].path, 'utf8'), 'idea attachment');
+  assert.notEqual(task.attachments[0].path, first.attachments[0].path);
+  await assert.rejects(() => access(first.attachments[0].path));
 
   const retained = await service.addInbox({ clientRequestId: '53535353-5353-4353-8353-535353535353', title: 'Keep on failure' });
   mock.api.providers.listModes = async () => ({ provider: 'codex', error: 'offline', fetchedAt: '', requestId: '' });
   await assert.rejects(() => service.create({ ...input, clientRequestId: '54545454-5454-4454-8454-545454545454', inboxId: retained.id }, mock.api), /无法读取运行模式/);
   assert.equal((await store.read()).inbox[retained.id].title, retained.title);
+});
+test('deleting an Inbox idea removes its stored attachments', async t => {
+  const { service, store } = await setup(t);
+  const contents = Buffer.from('discarded idea attachment');
+  const entry = await service.addInbox({
+    clientRequestId: '56565656-5656-4656-8656-565656565656',
+    title: 'Discard this idea',
+    attachments: [{ id: '57575757-5757-4757-8757-575757575757', fileName: 'discard.txt', mimeType: 'text/plain', size: contents.byteLength, dataBase64: contents.toString('base64') }],
+  });
+  const path = entry.attachments[0].path;
+  await service.deleteInbox(entry.id);
+  assert.equal((await store.read()).inbox[entry.id], undefined);
+  await assert.rejects(() => access(path));
 });
 test('launch keeps the title out of the prompt body', async t => {
   const { service } = await setup(t); const mock = mockApi();

@@ -27,6 +27,43 @@ test('capture a global Inbox item and convert it into a task', async ({ page }) 
   await expect(page.getByTestId('inbox-panel')).not.toContainText('全局收集的新想法');
 });
 
+test('create an Inbox idea with a pasted file and carry its defaults into the task', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  const newIdea = page.getByRole('button', { name: '新建想法', exact: true });
+  await expect(newIdea).toBeVisible();
+  await expect(page.getByRole('button', { name: '新建任务', exact: true })).toHaveCount(0);
+  await newIdea.click();
+
+  const dialog = page.getByRole('dialog', { name: '快速添加到 Inbox' });
+  await dialog.getByLabel('任务名称').fill('带附件的 Inbox 想法');
+  await dialog.evaluate(element => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['idea file'], 'idea-notes.txt', { type: 'text/plain' }));
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+  await expect(dialog.getByText('idea-notes.txt', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '添加到 Inbox' }).click();
+
+  const entry = page.getByTestId('inbox-panel').locator('[data-testid^="inbox-entry-"]').filter({ hasText: '带附件的 Inbox 想法' });
+  await expect(entry).toContainText('1 个附件');
+  await entry.getByRole('button', { name: '创建任务', exact: true }).click();
+  await expect(page.getByLabel('任务标题', { exact: true })).toHaveValue('带附件的 Inbox 想法');
+  await expect(page.getByLabel('任务说明', { exact: true })).toHaveValue('带附件的 Inbox 想法');
+  await expect(page.getByTestId('task-attachments').getByText('idea-notes.txt', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '创建待办任务', exact: true }).click();
+  await expect(page.getByTestId('task-attachments').getByText('idea-notes.txt', { exact: true })).toBeVisible();
+});
+
+test('the task-board shortcut leaves the Inbox view', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  await expect(page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
+  await page.keyboard.press('Control+Shift+K');
+  await expect(page.getByRole('heading', { name: '所有任务，一目了然', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '新建任务', exact: true })).toBeVisible();
+});
+
 test('global Inbox follows the Paseo light theme', async ({ page }) => {
   await page.goto('/?light');
   const boardSurface = await page.getByTestId('card-task:preview-01').evaluate(element => getComputedStyle(element).backgroundColor);
@@ -216,7 +253,9 @@ test('filter workspaces, paste an attachment, and remember the default model', a
   await page.getByRole('button', { name: '新建任务', exact: true }).click();
   await expect(page.getByLabel('搜索工作区', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '选择工作区，当前 paseo-kanban / main', exact: true }).click();
+  const pickerTop = (await page.getByTestId('workspace-subpanel').getByLabel('选择工作区', { exact: true }).boundingBox())!.y;
   await page.getByLabel('搜索工作区', { exact: true }).fill('agent-service api');
+  expect((await page.getByTestId('workspace-subpanel').getByLabel('选择工作区', { exact: true }).boundingBox())!.y).toBe(pickerTop);
   await expect(page.getByRole('button', { name: '选择工作区 agent-service / feature/events', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '选择工作区 paseo-kanban / main', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '选择工作区 agent-service / feature/events', exact: true }).click();
