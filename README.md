@@ -1,6 +1,6 @@
 # Paseo Kanban
 
-面向 **Paseo 0.8.x** 的原生任务 / 会话看板插件。把分散在多个工作区的会话汇总为卡片，以类似 Multica 的方式推进任务：记录待办、交给 Agent、查看进度、人工审核、确认完成。
+面向 **Paseo 0.10.x** 的原生任务 / 会话看板插件。把分散在多个工作区的会话汇总为卡片，以类似 Multica 的方式推进任务：记录待办、交给 Agent、查看进度、人工审核、确认完成。
 
 ![桌面看板](docs/screenshots/desktop.png)
 
@@ -28,7 +28,7 @@
 
 ## 安装到 Paseo
 
-需要 Paseo **0.8.x**；插件采用 0.8 的客户端 / 服务端双入口格式。
+需要 Paseo **0.10.2–0.10.x**；插件采用当前的客户端 / 服务端双入口格式。
 
 1. 在 Paseo **Settings → Plugins** 中开启 **Enable plugins**。
 2. 在运行 daemon 的电脑上安装此目录：
@@ -49,7 +49,7 @@ paseo plugin ls
 
 如需从任务表单直接新建项目，请打开 Paseo **Settings → Plugins → 任务看板**，配置一个绝对的“项目基础目录”。此后在新建任务的工作区选择面板切换到“新建项目”，只输入项目名即可；插件不会覆盖同名的已有目录。
 
-Paseo 提供运行时依赖并编译插件，直接安装本地目录无需先构建网页预览。插件总开关影响该 daemon 的所有插件；本项目不会自动修改它。详见 [Paseo v0.8 官方安装说明](https://paseo.sh/docs/plugins/v0.8#install-and-try-it)。
+Paseo 提供运行时依赖并编译插件，直接安装本地目录无需先构建网页预览。插件总开关影响该 daemon 的所有插件；本项目不会自动修改它。详见 [Paseo 官方插件安装说明](https://paseo.sh/docs/plugins#install-and-try-it)。
 
 修改源码后：
 
@@ -105,7 +105,7 @@ npx playwright install chromium
 npm run check
 ```
 
-- `npm run typecheck`：类型检查，依赖锁定 Paseo SDK 0.8.0。
+- `npm run typecheck`：类型检查，依赖锁定 Paseo SDK 0.10.2。
 - `npm test`：核心测试覆盖全局看板与 Inbox 快捷键、Inbox 捕获 / 去重 / 原子转任务、项目目录和工作区创建、分页、真实 RPC 校验、状态转换、数据与附件持久化、任务及 Agent 启动去重、运行模式与 Thinking Mode、项目排序分组，以及真实 SDK 参数转换。
 - `npm run test:e2e`：浏览器场景覆盖 Inbox、搜索、任务创建 / 编辑 / 启动、已有工作区选择与新项目工作区创建、附件、默认模型、运行模式与 Thinking Mode、全屏看板、侧栏、批量完成、拖动 / 收起 / 恢复、窄屏保护，以及项目与分组整理。
 - `npm run build:preview`：独立网页预览构建。
@@ -135,4 +135,4 @@ tests/                     核心测试与浏览器验证
 scripts/                   宿主编译和只读 daemon 检查
 ```
 
-接口参考：[Paseo v0.8 插件文档](https://paseo.sh/docs/plugins/v0.8/reference)、[TypeScript SDK](https://paseo.sh/docs/sdk/quickstart)。工作流灵感来自 [Multica](https://github.com/multica-ai/multica)，未复制其代码。
+接口参考：[Paseo 插件文档](https://paseo.sh/docs/plugins/reference)、[TypeScript SDK](https://paseo.sh/docs/sdk/quickstart)。工作流灵感来自 [Multica](https://github.com/multica-ai/multica)，未复制其代码。

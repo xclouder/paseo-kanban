@@ -2,7 +2,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 
-// Use the installed Paseo 0.8 compiler without installing or enabling this plugin.
+// Use the installed Paseo compiler without installing or enabling this plugin.
 const resources = process.env.PASEO_RESOURCES || 'C:/Program Files/Paseo/resources';
 if (!process.env.PASEO_KANBAN_VERIFY_CHILD) {
   const executable = process.env.PASEO_ELECTRON || path.resolve(resources, '../Paseo.exe');
