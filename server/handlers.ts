@@ -5,12 +5,12 @@ import { BoardService } from './service';
 import { Store } from './store';
 import type { ProjectAction } from '../shared/projects';
 import type { AddInboxInput, CompleteReviewInput, CreateInput, CreateProjectWorkspaceInput, HideDoneInput, LaunchInput, MoveInput, PatchInboxInput, PatchInput } from '../shared/contracts';
-import type { KanbanSettings } from '../shared/settings';
+import type { KanbanSettingsPatch } from '../shared/settings';
 
 const service = new BoardService(new Store(join(process.env.PASEO_HOME || join(homedir(), '.paseo'), 'paseo-kanban', 'board.json')));
 export const read = (_: object, { paseo }: PluginHandlerContext) => service.read(paseo);
 export const readSettings = () => service.readSettings();
-export const saveSettings = (input: KanbanSettings) => service.saveSettings(input);
+export const saveSettings = (input: KanbanSettingsPatch) => service.saveSettings(input);
 export const organize = (input: ProjectAction, { paseo }: PluginHandlerContext) => service.organizeProjects(input, paseo);
 export const patch = (input: PatchInput, { paseo }: PluginHandlerContext) => service.patch(input, paseo);
 export const move = (input: MoveInput, { paseo }: PluginHandlerContext) => service.move(input, paseo);

@@ -3,12 +3,14 @@ import { projectLayoutSchema } from './projects';
 import { kanbanSettingsSchema } from './settings';
 
 export const stages = ['todo', 'running', 'blocked', 'review', 'done'] as const;
+export const MAX_TITLE_LENGTH = 1000;
+export const MAX_DESCRIPTION_LENGTH = 20000;
 export const stageNames: Record<Stage, string> = { todo: '待办', running: '执行中', blocked: '需关注', review: '待审核', done: '已完成' };
 export type Stage = typeof stages[number];
 export const priorityNames = { high: '高优先级', medium: '普通', low: '低优先级' };
 export const metadataSchema = z.object({
-  title: z.string().trim().max(180).optional(),
-  description: z.string().max(20000).default(''),
+  title: z.string().trim().max(MAX_TITLE_LENGTH).optional(),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH).default(''),
   tags: z.array(z.string().trim().min(1).max(40)).max(12).default([]),
   priority: z.enum(['high', 'medium', 'low']).default('medium'),
   pinned: z.boolean().default(false),
@@ -28,7 +30,7 @@ export const taskAttachmentSchema = z.object({
 });
 export type TaskAttachment = z.infer<typeof taskAttachmentSchema>;
 export const taskSchema = metadataSchema.extend({
-  id: z.string(), title: z.string().trim().min(1).max(180),
+  id: z.string(), title: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
   workspaceId: z.string().min(1), provider: z.string().trim().min(1).max(200),
   modeId: z.string().trim().min(1).max(200).optional(),
   thinkingOptionId: z.string().trim().min(1).max(200).optional(),
@@ -40,7 +42,8 @@ export const taskSchema = metadataSchema.extend({
 export type Task = z.infer<typeof taskSchema>;
 export const inboxEntrySchema = z.object({
   id: z.string().uuid(),
-  title: z.string().trim().min(1).max(180),
+  title: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH).default(''),
   createdAt: z.string(),
   attachments: z.array(taskAttachmentSchema).default([]),
 });

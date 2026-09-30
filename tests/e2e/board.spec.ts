@@ -10,6 +10,7 @@ test('capture a global Inbox item and convert it into a task', async ({ page }) 
   expect(await dialog.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(boardSurface);
   expect(await dialog.getByRole('button', { name: '添加到 Inbox' }).evaluate(element => getComputedStyle(element).backgroundColor)).toBe(boardAccent);
   await dialog.getByLabel('任务名称').fill('全局收集的新想法');
+  await dialog.getByLabel('详细描述（可选）').fill('保留这条想法的背景和验收标准');
   await dialog.getByRole('button', { name: '添加到 Inbox' }).click();
   await expect(dialog).toHaveCount(0);
 
@@ -19,6 +20,7 @@ test('capture a global Inbox item and convert it into a task', async ({ page }) 
   await entry.getByRole('button', { name: '创建任务', exact: true }).click();
   await expect(page.getByRole('heading', { name: '从 Inbox 创建任务', exact: true })).toBeVisible();
   await expect(page.getByLabel('任务标题', { exact: true })).toHaveValue('全局收集的新想法');
+  await expect(page.getByLabel('任务说明', { exact: true })).toHaveValue('保留这条想法的背景和验收标准');
   await page.getByRole('button', { name: '创建待办任务', exact: true }).click();
 
   await expect(page.getByRole('button', { name: '查看任务 全局收集的新想法', exact: true })).toBeVisible();
@@ -55,13 +57,41 @@ test('create an Inbox idea with a pasted file and carry its defaults into the ta
   await expect(page.getByTestId('task-attachments').getByText('idea-notes.txt', { exact: true })).toBeVisible();
 });
 
-test('the task-board shortcut leaves the Inbox view', async ({ page }) => {
+test('the task-board shortcut leaves Inbox and the common-conversation panel', async ({ page }) => {
   await page.goto('/');
   await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
   await expect(page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
   await page.keyboard.press('Control+Shift+K');
   await expect(page.getByRole('heading', { name: '所有任务，一目了然', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '新建任务', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '常用会话', exact: true }).click();
+  await expect(page.getByTestId('favorite-panel')).toBeVisible();
+  await page.keyboard.press('Control+Shift+K');
+  await expect(page.getByTestId('favorite-panel')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '所有任务，一目了然', exact: true })).toBeVisible();
+});
+
+test('Inbox removes an entry immediately while deletion finishes in the background', async ({ page }) => {
+  await page.goto('/?inbox-delete-delay');
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  const entry = page.getByTestId('inbox-entry-11111111-1111-4111-8111-111111111111');
+  await entry.getByRole('button', { name: '删除 Inbox 条目 整理下周迭代要处理的体验问题', exact: true }).click();
+  await entry.getByRole('button', { name: '确认删除 Inbox 条目 整理下周迭代要处理的体验问题', exact: true }).click();
+
+  await expect(entry).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event('paseo-kanban:test-release-inbox-delete')));
+  await expect(page.getByRole('alert')).toContainText('Inbox 条目已删除');
+});
+
+test('Inbox restores an optimistically removed entry when deletion fails', async ({ page }) => {
+  await page.goto('/?inbox-delete-error');
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  const entry = page.getByTestId('inbox-entry-11111111-1111-4111-8111-111111111111');
+  await entry.getByRole('button', { name: '删除 Inbox 条目 整理下周迭代要处理的体验问题', exact: true }).click();
+  await entry.getByRole('button', { name: '确认删除 Inbox 条目 整理下周迭代要处理的体验问题', exact: true }).click();
+
+  await expect(entry).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('模拟 Inbox 删除失败');
 });
 
 test('edit an Inbox entry before creating its task', async ({ page }) => {
@@ -81,13 +111,113 @@ test('edit an Inbox entry before creating its task', async ({ page }) => {
   await entry.getByRole('button', { name: '编辑 Inbox 条目 整理下周迭代要处理的体验问题', exact: true }).click();
   title = entry.getByRole('textbox', { name: '编辑 Inbox 条目 整理下周迭代要处理的体验问题', exact: true });
   await title.fill('整理本周 Inbox 体验问题');
+  await entry.getByRole('textbox', { name: '编辑 Inbox 详细描述 整理下周迭代要处理的体验问题', exact: true }).fill('逐项记录复现步骤和期望结果');
   await entry.getByRole('button', { name: '保存', exact: true }).click();
   await expect(entry).toContainText('整理本周 Inbox 体验问题');
+  await expect(entry).toContainText('逐项记录复现步骤和期望结果');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   await entry.getByRole('button', { name: '创建任务', exact: true }).click();
   await expect(page.getByLabel('任务标题', { exact: true })).toHaveValue('整理本周 Inbox 体验问题');
-  await expect(page.getByLabel('任务说明', { exact: true })).toHaveValue('整理本周 Inbox 体验问题');
+  await expect(page.getByLabel('任务说明', { exact: true })).toHaveValue('逐项记录复现步骤和期望结果');
+  await expect(page.getByText('Thinking Mode', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '展开更多设置', exact: true }).click();
+  await expect(page.getByText('Thinking Mode', { exact: true })).toBeVisible();
+});
+
+test('mobile Inbox captures an idea without opening the full task form', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+
+  await page.getByLabel('Inbox 输入', { exact: true }).fill('记住：补充移动端空状态');
+  await page.getByRole('button', { name: '存入 Inbox', exact: true }).click();
+
+  await expect(page.getByTestId('inbox-panel')).toContainText('记住：补充移动端空状态');
+  await expect(page.getByLabel('Inbox 输入', { exact: true })).toHaveValue('');
+  await expect(page.getByRole('heading', { name: '新建任务', exact: true })).toHaveCount(0);
+});
+
+test('mobile task picker starts a ready task in one action', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  await page.getByRole('button', { name: '开始执行 整理插件安装与使用文档', exact: true }).click();
+
+  const detail = page.getByTestId('task-detail-dialog');
+  await expect(detail).toBeVisible();
+  await expect(detail.getByRole('button', { name: '打开 Paseo 会话', exact: true })).toBeVisible();
+});
+
+test('mobile Inbox retry reuses its request id after a lost response', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?inbox-response-lost');
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+  await page.getByLabel('Inbox 输入', { exact: true }).fill('只应保存一次的想法');
+
+  await page.getByRole('button', { name: '存入 Inbox', exact: true }).click();
+  await expect(page.getByLabel('Inbox 输入', { exact: true })).toHaveValue('只应保存一次的想法');
+  await page.getByRole('button', { name: '存入 Inbox', exact: true }).click();
+
+  await expect(page.getByLabel('Inbox 输入', { exact: true })).toHaveValue('');
+  await expect(page.getByTestId('inbox-panel').getByText('只应保存一次的想法', { exact: true })).toHaveCount(1);
+});
+
+test('mobile keeps the independent common-conversation panel accessible', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '常用会话', exact: true }).click();
+  await expect(page.getByTestId('favorite-panel')).toBeVisible();
+  await expect(page.getByTestId('column-running')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true })).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await expect(page.getByRole('heading', { name: '常用会话', exact: true })).toBeVisible();
+  await expect(page.getByTestId('favorite-panel')).toBeVisible();
+  await page.getByRole('button', { name: '执行', exact: true }).click();
+  await expect(page.getByRole('button', { name: '查看任务 设计任务通知与收件箱', exact: true })).toBeVisible();
+});
+
+test('favorite a conversation and find it again from common conversations', async ({ page }) => {
+  await page.goto('/');
+  const title = '设计任务通知与收件箱';
+
+  await page.getByRole('button', { name: `收藏会话 ${title}`, exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('已收藏为常用会话');
+  await page.getByRole('button', { name: '常用会话', exact: true }).click();
+  await expect(page.getByRole('button', { name: `查看常用会话 ${title}`, exact: true })).toBeVisible();
+  await page.getByLabel('搜索常用会话', { exact: true }).fill('通知 收件箱');
+  await expect(page.getByRole('button', { name: /^查看常用会话 / })).toHaveCount(1);
+  await page.getByLabel('搜索常用会话', { exact: true }).fill('不存在的收藏');
+  await expect(page.getByText('没有匹配的常用会话', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '清除常用会话搜索', exact: true }).click();
+  await expect(page.getByRole('button', { name: `查看常用会话 ${title}`, exact: true })).toBeVisible();
+
+  await page.reload();
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^常用会话/ }).click();
+  await expect(page.getByRole('button', { name: `取消收藏会话 ${title}`, exact: true })).toBeVisible();
+});
+
+test('common conversations remain available after they are removed from the board', async ({ page }) => {
+  await page.goto('/');
+  const title = '登录流程增加 OAuth 回调处理';
+
+  await page.getByRole('button', { name: `查看任务 ${title}`, exact: true }).click();
+  await page.getByTestId('task-detail-dialog').getByRole('button', { name: '从看板收起', exact: true }).click();
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^常用会话/ }).click();
+
+  const favorite = page.getByTestId('favorite-agent:session-01');
+  await expect(favorite.getByRole('button', { name: `查看常用会话 ${title}`, exact: true })).toBeVisible();
+  await expect(favorite).toContainText('已收起');
+});
+
+test('mobile one-tap launch preserves workspace conflict confirmation', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  await page.getByRole('button', { name: '开始执行 为会话增加标签和快捷筛选', exact: true }).click();
+
+  await expect(page.getByRole('alert').filter({ hasText: '这个工作区已有任务在执行' })).toBeVisible();
 });
 
 test('global Inbox follows the Paseo light theme', async ({ page }) => {
@@ -279,6 +409,7 @@ test('filter workspaces, paste an attachment, and remember the default model', a
   await page.getByRole('button', { name: '新建任务', exact: true }).click();
   await expect(page.getByLabel('搜索工作区', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '选择工作区，当前 paseo-kanban / main', exact: true }).click();
+  await expect(page.getByLabel('搜索工作区', { exact: true })).toBeFocused();
   const pickerTop = (await page.getByTestId('workspace-subpanel').getByLabel('选择工作区', { exact: true }).boundingBox())!.y;
   await page.getByLabel('搜索工作区', { exact: true }).fill('agent-service api');
   expect((await page.getByTestId('workspace-subpanel').getByLabel('选择工作区', { exact: true }).boundingBox())!.y).toBe(pickerTop);
@@ -292,6 +423,14 @@ test('filter workspaces, paste an attachment, and remember the default model', a
     window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
   });
   await expect(page.getByText('clipboard.png', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    const trace = new File(['trace'], 'performance.utrace', { type: 'application/octet-stream' });
+    Object.defineProperty(trace, 'size', { value: 30 * 1024 * 1024 });
+    transfer.items.add(trace);
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByText('performance.utrace', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'codex / 示例模型', exact: true }).click();
   await page.getByRole('button', { name: '设为默认模型', exact: true }).click();
   await expect(page.getByRole('button', { name: '当前默认模型', exact: true })).toBeVisible();
@@ -714,8 +853,8 @@ test('completing a card closes its detail and mobile light theme renders', async
   await page.getByRole('button', { name: '查看任务 为会话增加标签和快捷筛选', exact: true }).click();
   const detail = page.getByTestId('task-detail-dialog');
   const detailBox = await detail.boundingBox();
-  expect(detailBox!.width).toBeLessThanOrEqual(366);
-  expect(detailBox!.height).toBeLessThanOrEqual(820);
+  expect(detailBox!.width).toBe(390);
+  expect(detailBox!.height).toBeLessThanOrEqual(844);
   await expect(detail.getByRole('button', { name: '开始执行', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '已完成', exact: true }).click();
   await expect(detail).toHaveCount(0);

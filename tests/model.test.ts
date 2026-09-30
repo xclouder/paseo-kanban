@@ -1,9 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCards, defaultModeId, defaultThinkingOptionId, emptyStore, filterCards, metadataSchema, resolveStage, storeSchema, taskSchema } from '../shared/model';
-import { completeReviewInput, hideDoneInput, patchInput, createInput } from '../shared/contracts';
+import { buildCards, defaultModeId, defaultThinkingOptionId, emptyStore, filterCards, MAX_TITLE_LENGTH, metadataSchema, resolveStage, storeSchema, taskSchema } from '../shared/model';
+import { addInboxInput, completeReviewInput, createAttachmentInput, hideDoneInput, patchInput, createInput } from '../shared/contracts';
 import { fixture } from '../preview/fixture';
-import { kanbanSettingsSchema } from '../shared/settings';
+import { customTaskTemplateSchema, kanbanSettingsSchema } from '../shared/settings';
+test('custom task templates validate editable task defaults', () => {
+  const template = customTaskTemplateSchema.parse({ id: '55555555-5555-4555-8555-555555555555', name: '发布', title: '准备发布' });
+  assert.equal(template.priority, 'medium'); assert.deepEqual(template.tags, []); assert.equal(template.description, '');
+  assert.equal(customTaskTemplateSchema.safeParse({ ...template, tags: Array.from({ length: 13 }, (_, index) => `tag-${index}`) }).success, false);
+});
 
 test('partial RPC inputs do not introduce defaults or erase unrelated metadata', () => {
   const input = patchInput.parse({ id: 'agent:one', patch: { pinned: true } });
@@ -16,6 +21,17 @@ test('partial RPC inputs do not introduce defaults or erase unrelated metadata',
 test('legacy board files gain an empty Inbox without a version migration', () => {
   const store = storeSchema.parse({ version: 1, sessions: {}, tasks: {} });
   assert.deepEqual(store.inbox, {});
+});
+test('legacy Inbox entries gain an empty description without a version migration', () => {
+  const id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const store = storeSchema.parse({ version: 1, sessions: {}, tasks: {}, inbox: { [id]: { id, title: 'Legacy idea', createdAt: '2026-01-01T00:00:00.000Z' } } });
+  assert.equal(store.inbox[id].description, '');
+});
+test('Inbox accepts a longer title and an optional detailed description', () => {
+  const parsed = addInboxInput.parse({ clientRequestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: '长'.repeat(MAX_TITLE_LENGTH), description: '背景与验收标准' });
+  assert.equal(parsed.title.length, MAX_TITLE_LENGTH);
+  assert.equal(parsed.description, '背景与验收标准');
+  assert.equal(addInboxInput.safeParse({ ...parsed, title: `${parsed.title}超` }).success, false);
 });
 test('draft patches accept a workspace and newly pasted attachments without adding defaults', () => {
   const attachment = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', fileName: 'pasted.png', mimeType: 'image/png', size: 3, dataBase64: Buffer.from('abc').toString('base64') };
@@ -68,6 +84,10 @@ test('create RPC validates attachment metadata and applies an empty default', ()
   const attachment = { id: '99999999-9999-4999-8999-999999999999', fileName: 'mock.png', mimeType: 'image/png', size: 3, dataBase64: Buffer.from('abc').toString('base64') };
   assert.equal(createInput.safeParse({ ...base, attachments: [attachment] }).success, true);
   assert.equal(createInput.safeParse({ ...base, attachments: [{ ...attachment, dataBase64: 'not base64' }] }).success, false);
+});
+test('attachments may exceed 20 MB while staying within the total limit', () => {
+  const attachment = { id: '98989898-9898-4989-8989-989898989898', fileName: 'performance.utrace', mimeType: 'application/octet-stream', size: 30 * 1024 * 1024, dataBase64: 'AA==' };
+  assert.equal(createAttachmentInput.safeParse(attachment).success, true);
 });
 test('project base directory settings accept empty or absolute paths only', () => {
   assert.equal(kanbanSettingsSchema.parse({}).projectBaseDirectory, '');

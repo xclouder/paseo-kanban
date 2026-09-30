@@ -1,4 +1,5 @@
-import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CreateAttachmentInput } from '../shared/contracts';
+import { MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CreateAttachmentInput } from '../shared/contracts';
+import { MAX_DESCRIPTION_LENGTH, MAX_TITLE_LENGTH } from '../shared/model';
 
 export const INBOX_CHANGED_EVENT = 'paseo-kanban:inbox-changed';
 export const QUICK_INBOX_MODAL_TEST_ID = 'quick-inbox-modal';
@@ -162,7 +163,7 @@ export function installQuickInbox(
   const close = () => { if (!saving && !readingAttachments) dismiss(); };
   const open = () => {
     if (overlay) {
-      overlay.querySelector<HTMLInputElement>('input')?.focus();
+      overlay.querySelector<HTMLInputElement>('#paseo-kanban-quick-inbox-input')?.focus();
       return;
     }
     const requestId = crypto.randomUUID();
@@ -185,10 +186,12 @@ export function installQuickInbox(
         <kbd data-role="shortcut">Ctrl+Shift+I</kbd>
       </div>
       <label for="paseo-kanban-quick-inbox-input" style="display:block;margin:18px 0 8px;font-size:11px;font-weight:600">任务名称</label>
-      <input id="paseo-kanban-quick-inbox-input" maxlength="180" autocomplete="off" placeholder="需要完成什么？" />
+      <input id="paseo-kanban-quick-inbox-input" maxlength="${MAX_TITLE_LENGTH}" autocomplete="off" placeholder="需要完成什么？" />
+      <label for="paseo-kanban-quick-inbox-description" style="display:block;margin:12px 0 8px;font-size:11px;font-weight:600">详细描述（可选）</label>
+      <textarea id="paseo-kanban-quick-inbox-description" maxlength="${MAX_DESCRIPTION_LENGTH}" placeholder="补充背景、目标或验收标准…"></textarea>
       <div data-role="paste-area" tabindex="0" style="box-sizing:border-box;margin-top:12px;padding:11px;border:1px dashed ${palette.border};border-radius:7px;background:${palette.surface0};outline:none">
         <div style="font-size:11px;font-weight:600">粘贴图片或文件</div>
-        <div data-role="paste-hint" style="margin-top:4px;color:${palette.foregroundMuted};font-size:10px">支持 Ctrl/⌘ + V · 最多 10 个，单个 20 MB，总计 50 MB</div>
+        <div data-role="paste-hint" style="margin-top:4px;color:${palette.foregroundMuted};font-size:10px">支持 Ctrl/⌘ + V · 最多 10 个，总计 50 MB</div>
         <div data-role="attachments" style="display:flex;flex-direction:column;gap:7px"></div>
       </div>
       <div data-role="error" role="alert" style="display:none;margin-top:9px;font-size:11px"></div>
@@ -196,7 +199,8 @@ export function installQuickInbox(
         <button data-role="cancel" type="button">取消</button>
         <button data-role="save" type="submit">添加到 Inbox</button>
       </div>`;
-    const input = dialog.querySelector<HTMLInputElement>('input')!;
+    const input = dialog.querySelector<HTMLInputElement>('#paseo-kanban-quick-inbox-input')!;
+    const description = dialog.querySelector<HTMLTextAreaElement>('#paseo-kanban-quick-inbox-description')!;
     const cancel = dialog.querySelector<HTMLButtonElement>('[data-role="cancel"]')!;
     const submit = dialog.querySelector<HTMLButtonElement>('[data-role="save"]')!;
     const error = dialog.querySelector<HTMLDivElement>('[data-role="error"]')!;
@@ -206,6 +210,7 @@ export function installQuickInbox(
     const shortcut = dialog.querySelector<HTMLElement>('[data-role="shortcut"]')!;
     const subtitle = dialog.querySelector<HTMLElement>('[data-role="subtitle"]')!;
     input.style.cssText = `box-sizing:border-box;width:100%;height:42px;padding:0 11px;border:1px solid ${palette.border};border-radius:7px;background:${palette.surface0};color:${palette.foreground};font:12px inherit;outline:none;`;
+    description.style.cssText = `box-sizing:border-box;width:100%;min-height:92px;max-height:240px;padding:10px 11px;border:1px solid ${palette.border};border-radius:7px;background:${palette.surface0};color:${palette.foreground};font:12px/19px inherit;outline:none;resize:vertical;`;
     cancel.style.cssText = `height:36px;padding:0 13px;border:1px solid ${palette.border};border-radius:7px;background:${palette.surface1};color:${palette.foreground};font:600 12px inherit;cursor:pointer;`;
     submit.style.cssText = `height:36px;padding:0 15px;border:1px solid ${palette.accent};border-radius:7px;background:${palette.accent};color:${palette.accentForeground};font:600 12px inherit;cursor:pointer;`;
     icon.style.cssText = `box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:36px;height:36px;flex:0 0 36px;border:1px solid ${palette.border};border-radius:8px;background:${palette.surface2};color:${palette.accent};`;
@@ -214,7 +219,7 @@ export function installQuickInbox(
     error.style.color = palette.statusDanger;
     const renderAttachments = () => {
       attachmentList.replaceChildren();
-      pasteHint.textContent = readingAttachments ? '正在读取附件…' : '支持 Ctrl/⌘ + V · 最多 10 个，单个 20 MB，总计 50 MB';
+      pasteHint.textContent = readingAttachments ? '正在读取附件…' : '支持 Ctrl/⌘ + V · 最多 10 个，总计 50 MB';
       for (const attachment of attachments) {
         const item = ownerDocument.createElement('div');
         item.style.cssText = `display:flex;align-items:center;gap:8px;margin-top:7px;padding-top:7px;border-top:1px solid ${palette.border};font-size:10px;`;
@@ -240,8 +245,6 @@ export function installQuickInbox(
       if (attachments.length + files.length > MAX_ATTACHMENT_FILES) {
         error.textContent = `最多添加 ${MAX_ATTACHMENT_FILES} 个附件。`; error.style.display = 'block'; return;
       }
-      const oversized = files.find(file => file.size > MAX_ATTACHMENT_SIZE);
-      if (oversized) { error.textContent = `${oversized.name} 超过 20 MB，无法添加。`; error.style.display = 'block'; return; }
       const total = attachments.reduce((sum, attachment) => sum + attachment.size, 0) + files.reduce((sum, file) => sum + file.size, 0);
       if (total > MAX_ATTACHMENT_TOTAL_SIZE) { error.textContent = '附件总大小不能超过 50 MB。'; error.style.display = 'block'; return; }
       readingAttachments = true; submit.disabled = true; error.style.display = 'none'; renderAttachments();
@@ -251,6 +254,8 @@ export function installQuickInbox(
     };
     input.addEventListener('focus', () => { input.style.borderColor = palette.accent; });
     input.addEventListener('blur', () => { input.style.borderColor = palette.border; });
+    description.addEventListener('focus', () => { description.style.borderColor = palette.accent; });
+    description.addEventListener('blur', () => { description.style.borderColor = palette.border; });
     overlay.appendChild(dialog);
     ownerDocument.body.appendChild(overlay);
     inertBackground = Array.from(ownerDocument.body.children)
@@ -262,7 +267,7 @@ export function installQuickInbox(
     dialog.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); close(); }
       if (event.key === 'Tab') {
-        const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('input:not([disabled]), [tabindex="0"], button:not([disabled])'));
+        const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('input:not([disabled]), textarea:not([disabled]), [tabindex="0"], button:not([disabled])'));
         if (!focusable.length) { event.preventDefault(); return; }
         const index = focusable.indexOf(ownerDocument.activeElement as HTMLElement);
         const next = event.shiftKey ? (index <= 0 ? focusable.length - 1 : index - 1) : (index < 0 || index === focusable.length - 1 ? 0 : index + 1);
@@ -287,19 +292,19 @@ export function installQuickInbox(
       }
       if (saving || readingAttachments) return;
       saving = true;
-      input.disabled = cancel.disabled = submit.disabled = true;
+      input.disabled = description.disabled = cancel.disabled = submit.disabled = true;
       dialog.tabIndex = -1;
       dialog.focus();
       submit.textContent = '正在保存…';
       error.style.display = 'none';
       try {
-        await save({ clientRequestId: requestId, title, attachments });
+        await save({ clientRequestId: requestId, title, description: description.value.trim(), attachments });
         saving = false;
         dismiss();
         ownerDocument.dispatchEvent(new Event(INBOX_CHANGED_EVENT));
       } catch (cause) {
         saving = false;
-        input.disabled = cancel.disabled = submit.disabled = false;
+        input.disabled = description.disabled = cancel.disabled = submit.disabled = false;
         submit.textContent = '添加到 Inbox';
         error.textContent = cause instanceof Error ? cause.message : String(cause);
         error.style.display = 'block';

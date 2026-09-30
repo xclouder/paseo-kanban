@@ -12,6 +12,7 @@ import { installQuickInbox } from '../client/quick-inbox';
 const key = 'paseo-kanban-preview-v1';
 const initial = () => { try { const raw = localStorage.getItem(key); return raw ? snapshotSchema.parse(JSON.parse(raw)) : fixture(); } catch { return fixture(); } };
 let data = initial();
+let simulatedInboxResponseLoss = false;
 const persist = () => localStorage.setItem(key, JSON.stringify(data));
 function metadata(id: string) {
   if (id.startsWith('agent:')) { const aid = id.slice(6); data.store.sessions[aid] ??= metadataSchema.parse({}); return data.store.sessions[aid]; }
@@ -74,9 +75,28 @@ const api: BoardApi = {
     persist();
     return { ok: true, count: targets.length };
   },
+  addInbox: async input => {
+    const existing = data.store.inbox[input.clientRequestId];
+    if (existing) return existing;
+    const entry = { id: input.clientRequestId, title: input.title, description: input.description ?? '', attachments: [], createdAt: new Date().toISOString() };
+    data.store.inbox[entry.id] = entry;
+    persist();
+    if (location.search.includes('inbox-response-lost') && !simulatedInboxResponseLoss) {
+      simulatedInboxResponseLoss = true;
+      throw new Error('Inbox 已保存，但响应中断。');
+    }
+    return entry;
+  },
   create: async input => { const existing = Object.values(data.store.tasks).find(task => task.createRequestId === input.clientRequestId); if (existing) return existing; const inboxEntry = input.inboxId ? data.store.inbox[input.inboxId] : undefined; if (input.inboxId && !inboxEntry) throw new Error('Inbox 条目已不存在，请刷新后重试。'); const now = new Date().toISOString(); const attachments = [...(inboxEntry?.attachments ?? []), ...(input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` }))]; const task = taskSchema.parse({ ...input, createRequestId: input.clientRequestId, attachments, id: `task:${crypto.randomUUID()}`, createdAt: now, updatedAt: now, stage: 'todo' }); data.store.tasks[task.id] = task; if (input.inboxId) delete data.store.inbox[input.inboxId]; persist(); return task; },
-  patchInbox: async ({ id, expectedTitle, title }) => { const entry = data.store.inbox[id]; if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。'); if (entry.title !== expectedTitle) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。'); entry.title = title; persist(); return entry; },
-  removeInbox: async ({ id }) => { if (!data.store.inbox[id]) throw new Error('Inbox 条目不存在，请刷新后重试。'); delete data.store.inbox[id]; persist(); },
+  patchInbox: async ({ id, expectedTitle, expectedDescription, title, description }) => { const entry = data.store.inbox[id]; if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。'); if (entry.title !== expectedTitle || (expectedDescription !== undefined && entry.description !== expectedDescription)) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。'); entry.title = title; if (description !== undefined) entry.description = description; persist(); return entry; },
+  removeInbox: async ({ id }) => {
+    if (location.search.includes('inbox-delete-delay')) {
+      await new Promise<void>(resolve => window.addEventListener('paseo-kanban:test-release-inbox-delete', () => resolve(), { once: true }));
+    }
+    if (location.search.includes('inbox-delete-error')) throw new Error('模拟 Inbox 删除失败。');
+    if (!data.store.inbox[id]) throw new Error('Inbox 条目不存在，请刷新后重试。');
+    delete data.store.inbox[id]; persist();
+  },
   launch: async ({ id, confirmedWorkspaceId }) => {
     if (location.search.includes('launch-error')) throw new Error('Agent 启动失败，请稍后重试。');
     const task = data.store.tasks[id]; if (task.agentId) return { status: 'started', agentId: task.agentId };
@@ -116,7 +136,7 @@ function App() {
     return () => document.removeEventListener('keydown', toggleSidebar);
   }, []);
   useEffect(() => installQuickInbox(async input => {
-    data.store.inbox[input.clientRequestId] ??= { id: input.clientRequestId, title: input.title, attachments: (input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-inbox-attachment://${attachment.id}` })), createdAt: new Date().toISOString() };
+    data.store.inbox[input.clientRequestId] ??= { id: input.clientRequestId, title: input.title, description: input.description ?? '', attachments: (input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-inbox-attachment://${attachment.id}` })), createdAt: new Date().toISOString() };
     persist();
     await qc.invalidateQueries({ queryKey: ['paseo-kanban', 'preview'] });
   }), []);

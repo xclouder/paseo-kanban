@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createPaseoApi, type PaseoApi } from '@getpaseo/client';
@@ -15,6 +15,49 @@ async function setup(t: TestContext) {
   const store = new Store(join(directory, 'board.json'));
   return { directory, store, service: new BoardService(store) };
 }
+async function waitForMissing(path: string) {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    try { await access(path); }
+    catch { return; }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail(`Timed out waiting for ${path} to be removed`);
+}
+test('model presets survive reload and independent settings updates', async t => {
+  const { service, store } = await setup(t);
+  const preset = { id: '11111111-1111-4111-8111-111111111111', name: '代码和思考', provider: 'codex/preview-model', thinkingOptionId: 'high' };
+  await service.saveSettings({ modelPresets: [preset] });
+  await service.saveSettings({ projectBaseDirectory: 'J:\\projects' });
+  assert.deepEqual((await new Store(store.file).read()).settings.modelPresets, [preset]);
+  await assert.rejects(() => service.saveSettings({ modelPresets: [preset, { ...preset, id: '22222222-2222-4222-8222-222222222222' }] }), /方案别名不能重复/);
+  await service.saveSettings({ modelPresets: [{ ...preset, name: '视觉和推理', thinkingOptionId: 'low' }] });
+  assert.equal((await service.readSettings()).modelPresets?.[0].thinkingOptionId, 'low');
+  await service.saveSettings({ modelPresets: [] });
+  const settings = (await new Store(store.file).read()).settings;
+  assert.deepEqual(settings.modelPresets, []);
+  assert.equal(settings.projectBaseDirectory, 'J:\\projects');
+});
+test('stale preset writes cannot overwrite another client update', async t => {
+  const { service } = await setup(t);
+  const first = { id: '11111111-1111-4111-8111-111111111111', name: 'First', provider: 'codex/preview-model' };
+  await service.saveSettings({ modelPresets: [first], expectedModelPresets: [] });
+  const second = { ...first, name: 'Updated' };
+  await service.saveSettings({ modelPresets: [second], expectedModelPresets: [first] });
+  await assert.rejects(() => service.saveSettings({ modelPresets: [], expectedModelPresets: [first] }), /方案已在其他位置修改/);
+  assert.deepEqual((await service.readSettings()).modelPresets, [second]);
+});
+test('custom task templates persist independently and reject stale writes', async t => {
+  const { service, store } = await setup(t);
+  const template = { id: '33333333-3333-4333-8333-333333333333', name: '发布检查', title: '检查发布：', description: '核对变更与回滚方案', priority: 'high' as const, tags: ['发布'] };
+  await service.saveSettings({ taskTemplates: [template], expectedTaskTemplates: [] });
+  await service.saveSettings({ projectBaseDirectory: 'J:\\projects' });
+  assert.deepEqual((await new Store(store.file).read()).settings.taskTemplates, [template]);
+  const updated = { ...template, title: '准备发布：' };
+  await service.saveSettings({ taskTemplates: [updated], expectedTaskTemplates: [template] });
+  await assert.rejects(() => service.saveSettings({ taskTemplates: [], expectedTaskTemplates: [template] }), /任务模板已在其他位置修改/);
+  assert.deepEqual((await service.readSettings()).taskTemplates, [updated]);
+});
 function mockApi() {
   const snapshot = fixture();
   const agents = snapshot.agents.map(a => ({ ...a, activeTurn: a.activeTurn ? { turnId: 'active-turn', startedAt: a.updatedAt } : null as { turnId: string; startedAt: string | null } | null, title: a.title, archivedAt: null, pendingPermissions: a.pendingPermission ? [{ id: 'permission' }] : [], capabilities: {}, model: 'model', availableModes: [], currentModeId: null, persistence: null }));
@@ -246,10 +289,11 @@ test('launch starts immediately when running agents belong only to other workspa
 test('Inbox capture is idempotent and conversion removes the entry only after task creation', async t => {
   const { service, store } = await setup(t); const mock = mockApi();
   const contents = Buffer.from('idea attachment');
-  const entryInput = { clientRequestId: '51515151-5151-4151-8151-515151515151', title: 'Capture this idea', attachments: [{ id: '50505050-5050-4050-8050-505050505050', fileName: 'idea.txt', mimeType: 'text/plain', size: contents.byteLength, dataBase64: contents.toString('base64') }] };
+  const entryInput = { clientRequestId: '51515151-5151-4151-8151-515151515151', title: 'Capture this idea', description: 'Detailed context for later', attachments: [{ id: '50505050-5050-4050-8050-505050505050', fileName: 'idea.txt', mimeType: 'text/plain', size: contents.byteLength, dataBase64: contents.toString('base64') }] };
   const first = await service.addInbox(entryInput);
   const retry = await service.addInbox(entryInput);
   assert.deepEqual(retry, first);
+  assert.equal(first.description, entryInput.description);
   assert.equal(first.attachments.length, 1);
   assert.equal(await readFile(first.attachments[0].path, 'utf8'), 'idea attachment');
   assert.equal(Object.keys((await store.read()).inbox).length, 1);
@@ -281,24 +325,28 @@ test('deleting an Inbox idea removes its stored attachments', async t => {
   const path = entry.attachments[0].path;
   await service.deleteInbox(entry.id);
   assert.equal((await store.read()).inbox[entry.id], undefined);
-  await assert.rejects(() => access(path));
+  await waitForMissing(path);
 });
-test('editing an Inbox idea updates only its title', async t => {
+test('editing an Inbox idea updates its title and optional description', async t => {
   const { service, store } = await setup(t);
   const contents = Buffer.from('keep this attachment');
   const entry = await service.addInbox({
     clientRequestId: '58585858-5858-4858-8858-585858585858',
     title: 'Original idea',
+    description: 'Original details',
     attachments: [{ id: '59595959-5959-4959-8959-595959595959', fileName: 'keep.txt', mimeType: 'text/plain', size: contents.byteLength, dataBase64: contents.toString('base64') }],
   });
-  const changed = await service.patchInbox({ id: entry.id, expectedTitle: 'Original idea', title: 'Updated idea' });
+  const changed = await service.patchInbox({ id: entry.id, expectedTitle: 'Original idea', expectedDescription: 'Original details', title: 'Updated idea', description: 'Updated details' });
   assert.equal(changed.title, 'Updated idea');
+  assert.equal(changed.description, 'Updated details');
   assert.deepEqual(changed.attachments, entry.attachments);
   assert.equal((await store.read()).inbox[entry.id].title, 'Updated idea');
   assert.equal(await readFile(entry.attachments[0].path, 'utf8'), 'keep this attachment');
-  await assert.rejects(() => service.patchInbox({ id: entry.id, expectedTitle: 'Original idea', title: 'Stale overwrite' }), /其他位置修改/);
-  assert.equal((await store.read()).inbox[entry.id].title, 'Updated idea');
-  await assert.rejects(() => service.patchInbox({ id: '60606060-6060-4060-8060-606060606060', expectedTitle: 'Missing', title: 'Missing' }), /Inbox 条目不存在/);
+  const legacyChange = await service.patchInbox({ id: entry.id, expectedTitle: 'Updated idea', title: 'Legacy client title edit' });
+  assert.equal(legacyChange.description, 'Updated details');
+  await assert.rejects(() => service.patchInbox({ id: entry.id, expectedTitle: 'Original idea', expectedDescription: 'Original details', title: 'Stale overwrite', description: '' }), /其他位置修改/);
+  assert.equal((await store.read()).inbox[entry.id].title, 'Legacy client title edit');
+  await assert.rejects(() => service.patchInbox({ id: '60606060-6060-4060-8060-606060606060', expectedTitle: 'Missing', title: 'Missing', description: '' }), /Inbox 条目不存在/);
 });
 test('launch keeps the title out of the prompt body', async t => {
   const { service } = await setup(t); const mock = mockApi();
@@ -384,7 +432,13 @@ test('board reads recover interrupted attachment deletes and remove orphan tombs
   await rename(directory, deletedTombstone);
   await store.update(data => { delete data.tasks[draft.id]; });
   await service.read(mock.api);
-  await assert.rejects(() => access(deletedTombstone));
+  await waitForMissing(deletedTombstone);
+
+  const canonicalOrphan = join(dirname(store.file), 'attachments', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');
+  await mkdir(canonicalOrphan, { recursive: true });
+  await writeFile(join(canonicalOrphan, 'orphan.txt'), 'orphan');
+  await service.read(mock.api);
+  await assert.rejects(() => access(canonicalOrphan));
 });
 test('launch rejects attachment paths outside the task-owned directory', async t => {
   const { service, store } = await setup(t); const mock = mockApi();

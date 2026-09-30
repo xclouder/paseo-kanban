@@ -1,5 +1,5 @@
 import type { PaseoApi, PaseoAgent, PaseoWorkspace } from '@getpaseo/client';
-import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type HideDoneInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
+import { createProjectWorkspaceInput, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_TOTAL_SIZE, type AddInboxInput, type CompleteReviewInput, type CreateInput, type CreateProjectWorkspaceInput, type HideDoneInput, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
 import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, inboxEntrySchema, metadataSchema, resolveStage, taskSchema, type Agent, type BoardStore, type Metadata, type Snapshot, type TaskAttachment, type Workspace } from '../shared/model';
 import { Store } from './store';
 import { applyProjectAction, type ProjectAction } from '../shared/projects';
@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, copyFile, lstat, mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
-import { kanbanSettingsSchema, type KanbanSettings } from '../shared/settings';
+import { kanbanSettingsPatchSchema, kanbanSettingsSchema, type KanbanSettings, type KanbanSettingsPatch } from '../shared/settings';
 
 const agentRefreshConcurrency = 25;
 const providerDiscoveryTimeoutMs = 3000;
@@ -63,6 +63,7 @@ function summarizeWorkspace(workspace: PaseoWorkspace): Workspace {
 }
 
 export class BoardService {
+  private readonly attachmentCleanups = new Map<string, Promise<void>>();
   constructor(readonly store: Store, private readonly providerTimeoutMs = providerDiscoveryTimeoutMs, private readonly providerRetryMs = providerDiscoveryRetryMs) {}
   async organizeProjects(action: ProjectAction, paseo: PaseoApi) {
     return this.store.update(async data => {
@@ -78,6 +79,13 @@ export class BoardService {
   }
   private attachmentRoot() { return join(dirname(this.store.file), 'attachments'); }
   private attachmentDirectory(taskId: string) { return join(this.attachmentRoot(), this.attachmentKey(taskId)); }
+  private cleanupAttachmentDirectory(path: string) {
+    if (this.attachmentCleanups.has(path)) return;
+    const cleanup = rm(path, { recursive: true, force: true })
+      .catch(() => undefined)
+      .finally(() => { this.attachmentCleanups.delete(path); });
+    this.attachmentCleanups.set(path, cleanup);
+  }
   /** Recover an interrupted delete, and retry cleanup after interrupted creates/deletes. */
   private async reconcileAttachmentStorage(data: BoardStore) {
     let entries;
@@ -97,23 +105,25 @@ export class BoardService {
       const deleting = deletingPattern.exec(entry.name);
       if (deleting) {
         const key = deleting[1].toLowerCase();
-        if (!active.has(key)) { await rm(source, { recursive: true, force: true }).catch(() => undefined); continue; }
+        if (!active.has(key)) { this.cleanupAttachmentDirectory(source); continue; }
         const target = join(this.attachmentRoot(), deleting[1]);
         try { await rename(source, target); }
         catch {
-          try { await access(target); await rm(source, { recursive: true, force: true }); }
+          try { await access(target); this.cleanupAttachmentDirectory(source); }
           catch { /* Leave the tombstone for the next board read. */ }
         }
       } else if (canonicalPattern.test(entry.name) && !active.has(entry.name.toLowerCase())) {
-        await rm(source, { recursive: true, force: true }).catch(() => undefined);
+        const trash = `${source}.deleting-${randomUUID()}`;
+        try {
+          await rename(source, trash);
+          this.cleanupAttachmentDirectory(trash);
+        } catch { /* Leave the orphan for the next board read. */ }
       }
     }
   }
   private async saveAttachments(taskId: string, attachments: NonNullable<CreateInput['attachments']>, existing: TaskAttachment[] = []): Promise<TaskAttachment[]> {
     const combined = [...existing, ...attachments];
     if (combined.length > MAX_ATTACHMENT_FILES) throw new Error(`最多添加 ${MAX_ATTACHMENT_FILES} 个附件。`);
-    const oversized = combined.find(attachment => attachment.size > MAX_ATTACHMENT_SIZE);
-    if (oversized) throw new Error(`${oversized.fileName} 超过 20 MB，无法添加。`);
     const total = combined.reduce((sum, attachment) => sum + attachment.size, 0);
     if (total > MAX_ATTACHMENT_TOTAL_SIZE) throw new Error('附件总大小不能超过 50 MB。');
     if (new Set(combined.map(attachment => attachment.id)).size !== combined.length) throw new Error('附件标识重复，请移除后重新添加。');
@@ -229,10 +239,12 @@ export class BoardService {
     return (await this.store.read()).settings;
   }
 
-  async saveSettings(input: KanbanSettings): Promise<KanbanSettings> {
-    const settings = kanbanSettingsSchema.parse(input);
+  async saveSettings(input: KanbanSettingsPatch): Promise<KanbanSettings> {
+    const { expectedModelPresets, expectedTaskTemplates, ...settings } = kanbanSettingsPatchSchema.parse(input);
     return this.store.update(data => {
-      data.settings = settings;
+      if (settings.modelPresets && expectedModelPresets && JSON.stringify(data.settings.modelPresets ?? []) !== JSON.stringify(expectedModelPresets)) throw new Error('方案已在其他位置修改，请取消编辑后基于最新方案重试。');
+      if (settings.taskTemplates && expectedTaskTemplates && JSON.stringify(data.settings.taskTemplates ?? []) !== JSON.stringify(expectedTaskTemplates)) throw new Error('任务模板已在其他位置修改，请取消编辑后基于最新模板重试。');
+      data.settings = kanbanSettingsSchema.parse({ ...data.settings, ...settings });
       return data.settings;
     });
   }
@@ -371,7 +383,7 @@ export class BoardService {
       if (existing) return existing;
       try {
         const attachments = await this.saveAttachments(`inbox:${input.clientRequestId}`, input.attachments ?? []);
-        const entry = inboxEntrySchema.parse({ id: input.clientRequestId, title: input.title, attachments, createdAt: new Date().toISOString() });
+        const entry = inboxEntrySchema.parse({ id: input.clientRequestId, title: input.title, description: input.description, attachments, createdAt: new Date().toISOString() });
         data.inbox[entry.id] = entry;
         await this.store.write(data);
         return entry;
@@ -402,7 +414,7 @@ export class BoardService {
         if (moved) await rename(trash, directory).catch(() => undefined);
         throw error;
       }
-      if (moved) await rm(trash, { recursive: true, force: true }).catch(() => undefined);
+      if (moved) this.cleanupAttachmentDirectory(trash);
       return { ok: true };
     });
   }
@@ -410,8 +422,9 @@ export class BoardService {
     return this.store.update(data => {
       const entry = data.inbox[input.id];
       if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。');
-      if (entry.title !== input.expectedTitle) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。');
+      if (entry.title !== input.expectedTitle || (input.expectedDescription !== undefined && entry.description !== input.expectedDescription)) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。');
       entry.title = input.title;
+      if (input.description !== undefined) entry.description = input.description;
       return entry;
     });
   }
