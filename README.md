@@ -1,10 +1,11 @@
 # Paseo Kanban
 
-面向 **Paseo 0.10.x** 的原生任务 / 会话看板插件。把分散在多个工作区的会话汇总为卡片，以类似 Multica 的方式推进任务：记录待办、交给 Agent、查看进度、人工审核、确认完成。
+面向 **Paseo 0.15.x** 的原生任务 / 会话看板插件。把分散在多个工作区的会话汇总为卡片，以类似 Multica 的方式推进任务：记录待办、交给 Agent、查看进度、人工审核、确认完成。
 
 ![桌面看板](docs/screenshots/desktop.png)
 
 ## 已实现
+
 
 - 全局侧边栏入口，以及单个工作区的看板标签页。
 - 自动读取当前主机的全部未归档会话，处理分页；无需逐个导入。
@@ -28,7 +29,7 @@
 
 ## 安装到 Paseo
 
-需要 Paseo **0.10.2–0.10.x**；插件采用当前的客户端 / 服务端双入口格式。
+需要 Paseo **>=0.15.0 <0.16.0**；插件采用当前的客户端 / 服务端双入口格式。
 
 1. 在 Paseo **Settings → Plugins** 中开启 **Enable plugins**。
 2. 在运行 daemon 的电脑上安装此目录：
@@ -105,7 +106,7 @@ npx playwright install chromium
 npm run check
 ```
 
-- `npm run typecheck`：类型检查，依赖锁定 Paseo SDK 0.10.2。
+- `npm run typecheck`：类型检查，依赖锁定 Paseo SDK 0.13.2。
 - `npm test`：核心测试覆盖全局看板与 Inbox 快捷键、Inbox 捕获 / 去重 / 原子转任务、项目目录和工作区创建、分页、真实 RPC 校验、状态转换、数据与附件持久化、任务及 Agent 启动去重、运行模式与 Thinking Mode、项目排序分组，以及真实 SDK 参数转换。
 - `npm run test:e2e`：浏览器场景覆盖 Inbox、搜索、任务创建 / 编辑 / 启动、已有工作区选择与新项目工作区创建、附件、默认模型、运行模式与 Thinking Mode、全屏看板、侧栏、批量完成、拖动 / 收起 / 恢复、窄屏保护，以及项目与分组整理。
 - `npm run build:preview`：独立网页预览构建。
@@ -136,3 +137,5 @@ scripts/                   宿主编译和只读 daemon 检查
 ```
 
 接口参考：[Paseo 插件文档](https://paseo.sh/docs/plugins/reference)、[TypeScript SDK](https://paseo.sh/docs/sdk/quickstart)。工作流灵感来自 [Multica](https://github.com/multica-ai/multica)，未复制其代码。
+
+- 执行错误的任务可直接移到“已完成”；任务详情和卡片右键菜单支持加入或移出“稍后再看”，清单保留任务原有进度。

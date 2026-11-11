@@ -14,6 +14,7 @@ export const metadataSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(40)).max(12).default([]),
   priority: z.enum(['high', 'medium', 'low']).default('medium'),
   pinned: z.boolean().default(false),
+  watchLater: z.boolean().default(false),
   hidden: z.boolean().default(false),
   stage: z.enum(stages).optional(),
   stageTurn: z.string().nullable().optional(),
@@ -108,7 +109,8 @@ export function automaticStage(agent: Agent): Stage {
 
 export function resolveStage(meta: Metadata, agent?: Agent): Stage {
   if (!agent) return meta.stage ?? 'todo';
-  // Runtime blockers must never be hidden by an earlier manual move.
+  // Completion of a failed turn is explicit; a new prompt or live work reopens it.
+  if (agent.status === 'error' && !agentIsRunning(agent) && !agent.pendingPermission && agent.attentionReason !== 'permission' && meta.stage === 'done' && meta.stageTurn === agent.lastUserMessageAt) return 'done';
   const live = automaticStage(agent);
   if (live === 'blocked') return 'blocked';
   if (live === 'running') return 'running';
@@ -151,7 +153,7 @@ export function filterCards(cards: Card[], filters: Filters): Card[] {
     if (filters.attention && card.stage !== 'blocked' && card.stage !== 'review') return false;
     const text = [card.title, card.description, card.cwd, card.workspace, card.project, card.provider, card.id, card.agent?.id, ...card.tags].join(' ').toLocaleLowerCase();
     return words.every(word => text.includes(word));
-  }).sort((a, b) => Number(b.pinned) - Number(a.pinned) || rank[a.priority] - rank[b.priority] || a.order - b.order || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+  }).sort((a, b) => rank[a.priority] - rank[b.priority] || a.order - b.order || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
 }
 
 export function relativeTime(value: string, now = Date.now()): string {

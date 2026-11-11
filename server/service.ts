@@ -326,7 +326,7 @@ export class BoardService {
       if (input.stage === 'done' && agent && (agentIsRunning(agent) || agent.pendingPermission)) throw new Error('会话仍在运行或等待授权，请处理后再标记完成。');
       if (input.stage === 'running' && !agent) throw new Error('请在任务详情中点击“开始执行”，启动 Agent。');
       if (input.stage !== 'running' && agent && agentIsRunning(agent)) throw new Error('Agent 仍在执行，结束后会自动进入待审核。');
-      if (input.stage !== 'blocked' && agent && (agent.pendingPermission || agent.status === 'error')) throw new Error('请先在 Paseo 处理授权或执行错误。');
+      if (input.stage !== 'blocked' && agent && (agent.pendingPermission || agent.attentionReason === 'permission' || (agent.status === 'error' && input.stage !== 'done'))) throw new Error('请先在 Paseo 处理授权或执行错误。');
       meta.stage = input.stage; meta.stageTurn = agent?.lastUserMessageAt ?? null;
       // Reindex a lane under the same writer lock, avoiding drifting fractional ranks.
       const snapshot = await this.read(paseo, false);

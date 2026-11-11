@@ -2,7 +2,7 @@
   "name": "paseo-kanban",
   "version": "0.1.0",
   "private": true,
-  "description": "A task-first session board for Paseo 0.10",
+  "description": "A task-first session board for Paseo 0.15",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -14,9 +14,9 @@
     "check": "npm run typecheck && npm test && npm run test:e2e && npm run build:preview && npm run verify:host"
   },
   "devDependencies": {
-    "@getpaseo/client": "0.10.2",
-    "@getpaseo/plugin": "0.10.2",
-    "@getpaseo/protocol": "0.10.2",
+    "@getpaseo/client": "0.15.0",
+    "@getpaseo/plugin": "0.15.0",
+    "@getpaseo/protocol": "0.15.0",
     "@playwright/test": "^1.55.0",
     "@tanstack/react-query": "^5.90.0",
     "@types/node": "^22.0.0",

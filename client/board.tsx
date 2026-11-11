@@ -221,6 +221,8 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const [detailDirty, setDetailDirty] = useState(false);
   const [confirmingDetailClose, setConfirmingDetailClose] = useState(false);
   const [detailCloseBlocked, setDetailCloseBlocked] = useState(false);
+  const [laterView, setLaterView] = useState(false);
+  const [taskMenu, setTaskMenu] = useState<Card | null>(null);
   const [inboxView, setInboxView] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createSource, setCreateSource] = useState<InboxEntry | null>(null);
@@ -307,8 +309,9 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     if (layout.platform !== 'web' || typeof window === 'undefined') return;
     const onKey = (event: KeyboardEvent) => {
       if (!isActiveBoardKeyboardScope(keyboardScopeTestId)) return;
+      if (taskMenu) return;
       if (document.querySelector(`[data-testid="${QUICK_INBOX_MODAL_TEST_ID}"]`)) return;
-      if (event.type === 'keydown' && (inboxView || pinned) && isOpenBoardShortcut(event)) {
+      if (event.type === 'keydown' && (laterView || inboxView || pinned) && isOpenBoardShortcut(event)) {
         event.preventDefault(); event.stopImmediatePropagation(); reset();
         return;
       }
@@ -347,7 +350,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', onKey, true);
     return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKey, true); };
-  }, [inboxView, keyboardScopeTestId, layout.platform, pinned, selected]);
+  }, [laterView, inboxView, keyboardScopeTestId, layout.platform, pinned, selected, taskMenu]);
   useEffect(() => {
     changeDetailDirty(false);
     changeDetailCloseBlocked(false);
@@ -441,6 +444,8 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const all = useMemo(() => board.data ? buildCards(board.data) : [], [board.data]);
   const scope = all.filter(card => !workspaceId || card.workspaceId === workspaceId);
   const visible = filterCards(all, { query, projectId: project, workspaceId, provider, pinned: false, attention, hidden });
+  const laterCards = [false, true].flatMap(hidden => filterCards(all, { query, projectId: '', workspaceId, provider: '', pinned: false, attention: false, hidden })).filter(card => card.watchLater);
+  const toggleLater = (card: Card) => run(() => api.patch({ id: card.id, patch: { watchLater: !card.watchLater } }), card.watchLater ? '已移出稍后再看' : '已加入稍后再看');
   const favoriteCards = [
     ...filterCards(all, { query, projectId: '', workspaceId, provider: '', pinned: true, attention: false, hidden: false }),
     ...filterCards(all, { query, projectId: '', workspaceId, provider: '', pinned: true, attention: false, hidden: true }),
@@ -451,7 +456,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const move = (id: string, stage: Stage, beforeId?: string) => { setDragging(null); return run(() => api.move({ id, stage, beforeId }), `已移至${stageNames[stage]}`); };
   const completeReview = (ids: string[]) => { void run(() => api.completeReview({ ids }), `已将 ${ids.length} 个待审核任务标记为完成`); };
   const hideDone = (ids: string[]) => { void run(() => api.hideDone({ ids }), `已从看板收起 ${ids.length} 个已完成任务`); };
-  const reset = () => { setInboxView(false); setQuery(''); setProject(''); setProvider(''); setPinned(false); setAttention(false); setHidden(false); };
+  const reset = () => { setLaterView(false); setInboxView(false); setQuery(''); setProject(''); setProvider(''); setPinned(false); setAttention(false); setHidden(false); };
 
   const sidebarItem = (text: string, icon: string, selectedItem: boolean, onPress: () => void, amount?: number) => <Pressable key={text} accessibilityRole="button" accessibilityState={{ selected: selectedItem }} onPress={onPress} style={{ ...row, gap: 9, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 7, backgroundColor: selectedItem ? c.surface2 : 'transparent' }}>
     <Icon name={icon} size={15} color={selectedItem ? c.foreground : c.foregroundMuted} />
@@ -491,8 +496,9 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
       {!layout.compact && !workspaceId && <View testID="board-sidebar" style={{ width: sidebarWidth, position: 'relative', borderRightWidth: 1, borderRightColor: c.border, padding: 16, paddingTop: 24 }}>
         <View style={{ ...row, gap: 10, paddingHorizontal: 8, marginBottom: 30 }}><Icon name="PanelsTopLeft" size={23} color={c.accent} /><Text style={{ color: c.foreground, fontSize: 18, fontWeight: '700', letterSpacing: -0.6 }}>paseo<Text style={{ color: c.foregroundMuted, fontWeight: '400' }}> / board</Text></Text></View>
         <Label c={c}>工作台</Label>
+        {sidebarItem('稍后再看', 'Clock', laterView, () => { reset(); setLaterView(true); }, scope.filter(card => card.watchLater).length)}
         {sidebarItem('Inbox', 'Inbox', inboxView, () => { reset(); setInboxView(true); }, Object.keys(board.data?.store.inbox ?? {}).length)}
-        {sidebarItem('全部任务', 'LayoutGrid', !inboxView && !project && !pinned && !attention && !hidden, reset, count())}
+        {sidebarItem('全部任务', 'LayoutGrid', !laterView && !inboxView && !project && !pinned && !attention && !hidden, reset, count())}
         {sidebarItem('需要我处理', 'Inbox', attention, () => { reset(); setAttention(true); }, scope.filter(x => !x.hidden && ['blocked', 'review'].includes(x.stage)).length)}
         {sidebarItem('常用会话', 'Star', pinned, () => { reset(); setPinned(true); }, scope.filter(x => x.pinned).length)}
         <View style={{ height: 28 }} />
@@ -517,9 +523,10 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
               </Pressable>)}
             <View style={{ flex: 1 }}>
               <Text style={{ color: c.foregroundMuted, fontSize: 11, marginBottom: layout.compact ? 6 : 9 }}>{layout.compact ? 'PASEO · MOBILE' : `工作台 / ${workspaceId ? '工作区看板' : '任务看板'}`}</Text>
-              <View style={{ ...row, gap: 12 }}><Text accessibilityRole="header" style={{ color: c.foreground, fontSize: layout.compact ? 22 : 28, fontWeight: '700', letterSpacing: -0.8 }}>{inboxView ? 'Inbox' : pinned ? '常用会话' : layout.compact ? '选择任务，开始执行' : hidden ? '已收起的任务' : attention ? '需要我处理' : projects.find(p => p.id === project)?.name ?? '所有任务，一目了然'}</Text><Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{inboxView ? Object.keys(board.data?.store.inbox ?? {}).length : pinned ? favoriteCards.length : visible.length}</Text></View>
-              {!layout.compact && <Text style={{ color: c.foregroundMuted, fontSize: 12, marginTop: 8 }}>{inboxView ? '快速收集想法，准备好后再补全信息并创建任务。' : pinned ? '独立保留不常打开但值得长期收藏的会话，不受看板进度和收起状态影响。' : '从想法到交付，把每一段会话放回工作流。'}</Text>}
+              <View style={{ ...row, gap: 12 }}><Text accessibilityRole="header" style={{ color: c.foreground, fontSize: layout.compact ? 22 : 28, fontWeight: '700', letterSpacing: -0.8 }}>{laterView ? '稍后再看' : inboxView ? 'Inbox' : pinned ? '常用会话' : layout.compact ? '选择任务，开始执行' : hidden ? '已收起的任务' : attention ? '需要我处理' : projects.find(p => p.id === project)?.name ?? '所有任务，一目了然'}</Text><Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{laterView ? laterCards.length : inboxView ? Object.keys(board.data?.store.inbox ?? {}).length : pinned ? favoriteCards.length : visible.length}</Text></View>
+              {!layout.compact && <Text style={{ color: c.foregroundMuted, fontSize: 12, marginTop: 8 }}>{laterView ? '把值得回看的任务留在这里，随时打开或移出清单。' : inboxView ? '快速收集想法，准备好后再补全信息并创建任务。' : pinned ? '独立保留不常打开但值得长期收藏的会话，不受看板进度和收起状态影响。' : '从想法到交付，把每一段会话放回工作流。'}</Text>}
             </View>
+            {<Button c={c} label="切换稍后再看" active={laterView} onPress={() => { reset(); setLaterView(!laterView); }}>稍后再看</Button>}
             {!layout.compact && <Button c={c} icon={inboxView ? 'LayoutGrid' : 'Inbox'} active={inboxView} onPress={() => { if (inboxView) reset(); else { reset(); setInboxView(true); } }}>{inboxView ? '返回看板' : 'Inbox'}</Button>}
             {!layout.compact && <Button c={c} primary icon="Plus" onPress={() => inboxView && layout.platform === 'web' ? openQuickInbox() : openCreate()} disabled={busy}>{inboxView && layout.platform === 'web' ? '新建想法' : '新建任务'}</Button>}
           </View>
@@ -530,13 +537,13 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
               {query ? <Pressable accessibilityLabel="清除搜索" accessibilityRole="button" onPress={() => setQuery('')}><Icon name="X" size={14} color={c.foregroundMuted} /></Pressable> : <Text style={{ color: c.foregroundMuted, fontSize: 11 }}>/</Text>}
             </View>
             {!layout.compact && <Button c={c} icon={pinned ? 'LayoutGrid' : 'Star'} active={pinned} onPress={() => { if (pinned) reset(); else { reset(); setPinned(true); } }}>{pinned ? '返回看板' : '常用会话'}</Button>}
-            {!layout.compact && !pinned && <Button c={c} icon="CircleAlert" active={attention} onPress={() => setAttention(!attention)}>需处理</Button>}
-            {!layout.compact && !pinned && <Button c={c} icon="Archive" active={hidden} onPress={() => setHidden(!hidden)} label={hidden ? '返回活动任务' : '查看已收起任务'} />}
+            {!layout.compact && !laterView && !pinned && <Button c={c} icon="CircleAlert" active={attention} onPress={() => setAttention(!attention)}>需处理</Button>}
+            {!layout.compact && !laterView && !pinned && <Button c={c} icon="Archive" active={hidden} onPress={() => setHidden(!hidden)} label={hidden ? '返回活动任务' : '查看已收起任务'} />}
             <View style={{ flex: 1 }} />
             {!layout.compact && (mutation.isPending ? <ActivityIndicator size="small" color={c.accent} /> : <Text style={{ color: c.foregroundMuted, fontSize: 10 }}>{board.isFetching ? '同步中' : '每 5 秒同步'}</Text>)}
             {!layout.compact && <Button c={c} icon="RefreshCw" label="刷新看板" onPress={() => void board.refetch()} disabled={board.isFetching} />}
           </View>}
-          {!inboxView && !pinned && !layout.compact && (provider || (board.data?.providers.length ?? 0) > 1) && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ ...row, gap: 7 }}>
+          {!laterView && !inboxView && !pinned && !layout.compact && (provider || (board.data?.providers.length ?? 0) > 1) && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ ...row, gap: 7 }}>
             <Text style={{ color: c.foregroundMuted, fontSize: 11, marginRight: 4 }}>Agent</Text>
             <Button c={c} small active={!provider} onPress={() => setProvider('')}>全部</Button>
             {[...new Set([...(board.data?.providers ?? []), ...all.map(card => card.provider)])].filter(Boolean).map(p => <Button key={p} c={c} small active={provider === p} onPress={() => setProvider(p)}>{p}</Button>)}
@@ -547,7 +554,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
           <Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text>
           <Button c={c} small onPress={() => notice.retry ? void board.refetch() : setMessage(null)}>{notice.retry ? '重试' : '关闭'}</Button>
         </View>}
-        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} compact={layout.compact} busy={busy} add={layout.compact ? input => run(() => api.addInbox(input), '已存入 Inbox') : undefined} createTask={entry => openCreate(entry)} edit={input => run(() => api.patchInbox(input), 'Inbox 条目已更新')} remove={removeInboxOptimistically} /> : pinned ? <FavoritePanel c={c} cards={favoriteCards} total={scope.filter(card => card.pinned).length} query={query} compact={layout.compact} busy={busy} navigation={navigation} clearSearch={() => setQuery('')} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: false } }), '已取消收藏')} /> : layout.compact ? <MobileTaskPicker c={c} cards={visible} busy={busy} openCreate={() => openCreate()} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} launch={openAndLaunch} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: !card.pinned } }), card.pinned ? '已取消收藏' : '已收藏为常用会话')} /> : <View style={{ flex: 1, minHeight: 0 }}>
+        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : laterView ? <LaterPanel c={c} cards={laterCards} busy={busy} select={setSelected} remove={card => void toggleLater(card)} /> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} compact={layout.compact} busy={busy} add={layout.compact ? input => run(() => api.addInbox(input), '已存入 Inbox') : undefined} createTask={entry => openCreate(entry)} edit={input => run(() => api.patchInbox(input), 'Inbox 条目已更新')} remove={removeInboxOptimistically} /> : pinned ? <FavoritePanel c={c} cards={favoriteCards} total={scope.filter(card => card.pinned).length} query={query} compact={layout.compact} busy={busy} navigation={navigation} clearSearch={() => setQuery('')} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: false } }), '已取消收藏')} /> : layout.compact ? <MobileTaskPicker c={c} cards={visible} busy={busy} openCreate={() => openCreate()} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} launch={openAndLaunch} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: !card.pinned } }), card.pinned ? '已取消收藏' : '已收藏为常用会话')} /> : <View style={{ flex: 1, minHeight: 0 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {visible.length === 0 && <View style={{ padding: 16, ...row, gap: 12 }}><Icon name="Search" size={17} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 12, flex: 1 }}>{all.length ? '没有符合条件的任务。试试清除筛选，或查看已收起任务。' : '还没有会话。新建一个任务，或在 Paseo 中打开会话后刷新。'}</Text>{all.length > 0 && <Button c={c} small onPress={reset}>清除筛选</Button>}</View>}
             <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: layout.compact ? 12 : 24, gap: 15, flexGrow: 1 }} showsHorizontalScrollIndicator>
@@ -558,7 +565,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
                   <WebDropZone enabled={layout.platform === 'web' && !busy} onDrop={id => move(id, stage)}>
                     <ScrollView style={{ flex: 1, borderRadius: 9, backgroundColor: c.surface0, borderWidth: dragging ? 1 : 0, borderColor: c.border }} contentContainerStyle={{ gap: 10, paddingBottom: 32, minHeight: 150 }}>
                       {cards.map(card => <WebDropZone key={card.id} item enabled={layout.platform === 'web' && !busy} onDrop={id => { if (id !== card.id) move(id, stage, card.id); }}>
-                        <WebDragItem id={card.id} enabled={layout.platform === 'web' && !busy} onDrag={setDragging}>
+                        <WebDragItem id={card.id} enabled={layout.platform === 'web' && !busy} onDrag={setDragging} onContextMenu={() => setTaskMenu(card)}>
                           <TaskCard card={card} c={c} selected={selected === card.id} busy={busy} onSelect={() => setSelected(card.id)} onFavorite={() => void run(() => api.patch({ id: card.id, patch: { pinned: !card.pinned } }), card.pinned ? '已取消收藏' : '已收藏为常用会话')} />
                         </WebDragItem>
                       </WebDropZone>)}
@@ -571,9 +578,18 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
             {!layout.compact && <View style={{ ...row, paddingHorizontal: 26, paddingVertical: 12, borderTopWidth: 1, borderTopColor: c.border, gap: 8 }}><Icon name="GripVertical" size={13} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 10 }}>拖动卡片调整进度 · 点击查看详情 · / 搜索 · N 新建</Text><View style={{ flex: 1 }} /><Text style={{ color: c.foregroundMuted, fontSize: 10 }}>完成由你确认</Text></View>}
           </View>
         </View>}
-        {layout.compact && <MobileBottomNav c={c} inbox={inboxView} favorites={pinned} inboxCount={Object.keys(board.data?.store.inbox ?? {}).length} taskCount={scope.filter(card => !card.hidden && card.stage === 'todo' && card.task && !card.task.agentId).length} favoriteCount={scope.filter(card => card.pinned).length} showInbox={() => { reset(); setInboxView(true); }} showTasks={reset} showFavorites={() => { reset(); setPinned(true); }} />}
+        {layout.compact && <MobileBottomNav c={c} later={laterView} inbox={inboxView} favorites={pinned} inboxCount={Object.keys(board.data?.store.inbox ?? {}).length} taskCount={scope.filter(card => !card.hidden && card.stage === 'todo' && card.task && !card.task.agentId).length} favoriteCount={scope.filter(card => card.pinned).length} showInbox={() => { reset(); setInboxView(true); }} showTasks={reset} showFavorites={() => { reset(); setPinned(true); }} />}
       </View>
     </View>
+    <Modal visible={Boolean(taskMenu)} transparent animationType="fade" onRequestClose={() => setTaskMenu(null)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.58)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+        <View style={{ backgroundColor: c.surface1, padding: 24, borderRadius: 12, width: '100%', maxWidth: 420, maxHeight: '85%', gap: 12 }}>
+          <Text accessibilityRole="header" style={{ color: c.foreground }}>{taskMenu?.title}</Text>
+          <Button c={c} icon="Clock" disabled={busy} onPress={() => { if (taskMenu) void toggleLater(taskMenu).then(ok => { if (ok) setTaskMenu(null); }); }}>{taskMenu?.watchLater ? '移出稍后再看' : '加入稍后再看'}</Button>
+          <Button c={c} onPress={() => setTaskMenu(null)}>关闭菜单</Button>
+        </View>
+      </View>
+    </Modal>
     <Modal visible={Boolean(active)} transparent animationType="fade" {...(layout.platform === 'web' ? { accessibilityViewIsModal: true, accessibilityLabel: active ? `任务详情：${active.title}` : '任务详情' } : {})} onRequestClose={requestDetailClose}>
       <View style={{ flex: 1, backgroundColor: layout.compact ? c.surface1 : 'rgba(0,0,0,0.58)', alignItems: 'center', justifyContent: 'center', padding: layout.compact ? 0 : 28 }}>
         <View testID="task-detail-dialog" {...(layout.platform === 'web' ? {} : { role: 'dialog' as const, accessibilityViewIsModal: true, accessibilityLabel: active ? `任务详情：${active.title}` : '任务详情' })} style={{ width: '100%', maxWidth: layout.compact ? undefined : 680, height: layout.compact ? '100%' : undefined, maxHeight: layout.compact ? '100%' : '90%', backgroundColor: c.surface1, borderWidth: layout.compact ? 0 : 1, borderColor: c.border, borderRadius: layout.compact ? 0 : 14, overflow: 'hidden' }}>
@@ -623,13 +639,13 @@ function FavoritePanel({ c, cards, total, query, compact, busy, navigation, clea
   </ScrollView>;
 }
 
-function MobileBottomNav({ c, inbox, favorites, inboxCount, taskCount, favoriteCount, showInbox, showTasks, showFavorites }: { c: Colors; inbox: boolean; favorites: boolean; inboxCount: number; taskCount: number; favoriteCount: number; showInbox(): void; showTasks(): void; showFavorites(): void }) {
+function MobileBottomNav({ c, later, inbox, favorites, inboxCount, taskCount, favoriteCount, showInbox, showTasks, showFavorites }: { c: Colors; later: boolean; inbox: boolean; favorites: boolean; inboxCount: number; taskCount: number; favoriteCount: number; showInbox(): void; showTasks(): void; showFavorites(): void }) {
   const item = (label: string, icon: string, active: boolean, count: number, onPress: () => void) => <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} onPress={onPress} style={({ pressed }) => ({ flex: 1, minHeight: 58, alignItems: 'center', justifyContent: 'center', gap: 4, opacity: pressed ? 0.72 : 1 })}>
     <View style={{ ...row, gap: 6 }}><Icon name={icon} size={20} color={active ? c.accent : c.foregroundMuted} />{count > 0 && <View style={{ minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? c.accent : c.surface2 }}><Text style={{ color: active ? c.accentForeground : c.foregroundMuted, fontSize: 11, fontWeight: '700' }}>{count > 99 ? '99+' : count}</Text></View>}</View>
     <Text style={{ color: active ? c.foreground : c.foregroundMuted, fontSize: 13, fontWeight: active ? '700' : '500' }}>{label}</Text>
   </Pressable>;
   return <View testID="mobile-bottom-nav" style={{ ...row, flexShrink: 0, borderTopWidth: 1, borderTopColor: c.border, backgroundColor: c.surface1, paddingBottom: 8 }}>
-    {item('执行', 'CirclePlay', !inbox && !favorites, taskCount, showTasks)}
+    {item('执行', 'CirclePlay', !later && !inbox && !favorites, taskCount, showTasks)}
     {item('常用', 'Star', !inbox && favorites, favoriteCount, showFavorites)}
     {item('Inbox', 'Inbox', inbox, inboxCount, showInbox)}
   </View>;
@@ -926,11 +942,14 @@ function Detail({ card, snapshot, c, busy, web, pasteEnabled, autoLaunch = false
     {notice && <View accessibilityRole="alert" style={{ ...row, gap: 9, paddingHorizontal: 20, paddingVertical: 12, backgroundColor: c.surface2, borderBottomWidth: 1, borderBottomColor: c.border }}><Icon name={notice.error ? 'CircleAlert' : 'Check'} size={16} color={notice.error ? c.statusDanger : c.statusSuccess} /><Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text><Button c={c} small onPress={dismissNotice}>{notice.retry ? '重试' : '关闭'}</Button></View>}
     {(canLaunch || (card.agent && navigation)) && <View testID="task-primary-action" style={{ paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: c.border, backgroundColor: c.surface2 }}>
       {canLaunch ? <Button c={c} primary icon="Play" disabled={busy || dirty || !workspaceAvailable || launching} onPress={() => void startLaunch()}>{launchLabel}</Button> : <Button c={c} primary icon="ArrowUpRight" onPress={() => navigation!.openAgent({ agentId: card.agent!.id })}>打开 Paseo 会话</Button>}
+      {card.agent?.status === 'error' && card.stage !== 'done' && !agentIsRunning(card.agent) && !card.agent.pendingPermission && card.agent.attentionReason !== 'permission' && <View style={{ marginTop: 10 }}><Button c={c} icon="CircleCheck" disabled={busy || dirty} onPress={() => void move('done')}>直接完成</Button></View>}
       {canLaunch && <Text style={{ color: c.foregroundMuted, fontSize: 10, lineHeight: 18, marginTop: 8, textAlign: 'center' }}>{launchHelp}</Text>}
     </View>}
     <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ padding: 20 }}>
       <View style={{ ...row, gap: 7, marginBottom: 10 }}><Icon name={stageIcons[card.stage]} size={16} color={stageColor(card.stage, c)} /><Text style={{ color: stageColor(card.stage, c), fontSize: 12 }}>{stageNames[card.stage]}</Text><View style={{ flex: 1 }} /><Text selectable style={{ color: c.foregroundMuted, fontSize: 10 }}>{card.id.slice(-8)}</Text></View>
       <Text style={{ color: c.foregroundMuted, fontSize: 10, lineHeight: 17, marginBottom: 22 }}>{card.pinned ? '已标记为常用，可从“常用会话”快速找到。' : '经常使用这个会话？收藏后可从“常用会话”快速找到。'}</Text>
+      <Button c={c} small icon="Clock" active={card.watchLater} disabled={busy} label={card.watchLater ? '移出稍后再看' : '加入稍后再看'} onPress={() => void save({ watchLater: !card.watchLater })}>{card.watchLater ? '已加入稍后再看' : '稍后再看'}</Button>
+      <View style={{ height: 16 }} />
       <Input c={c} label="任务标题" value={title} onChangeText={setTitle} maxLength={MAX_TITLE_LENGTH} />
       <Input c={c} label="任务说明" value={description} onChangeText={setDescription} multiline maxLength={MAX_DESCRIPTION_LENGTH} placeholder="记录目标、上下文和验收标准…" />
       <Input c={c} label="标签（逗号分隔）" value={tags} onChangeText={setTags} placeholder="前端, 性能, 本周" />
@@ -1069,4 +1088,15 @@ function CreateForm({ c, snapshot, workspaceId, projectId, web, compact, shortcu
       {!compact && <Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 8, textAlign: 'center' }}>快捷键：Ctrl+Enter</Text>}
     </ScrollView>
   </>;
+}
+
+function LaterPanel({ c, cards, busy, select, remove }: { c: Colors; cards: Card[]; busy: boolean; select(id: string): void; remove(card: Card): void }) {
+  return <ScrollView testID="watch-later-panel" style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 12 }}>
+    {cards.length === 0 && <Text style={{ color: c.foregroundMuted }}>暂无稍后再看的任务。可在任务详情或右键菜单中加入。</Text>}
+    {cards.map(card => <View key={card.id} testID={`later-${card.id}`} style={{ padding: 16, gap: 10, borderWidth: 1, borderColor: c.border, borderRadius: 10 }}>
+      <Text style={{ color: c.foreground, fontSize: 15 }}>{card.title}</Text>
+      <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{card.project} / {card.workspace} · {stageNames[card.stage]}</Text>
+      <View style={wrap}><Button c={c} onPress={() => select(card.id)}>查看详情</Button><Button c={c} disabled={busy} onPress={() => remove(card)}>移出稍后再看</Button></View>
+    </View>)}
+  </ScrollView>;
 }

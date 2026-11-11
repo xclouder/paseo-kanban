@@ -135,9 +135,33 @@ test('search matches Chinese tags, paths, provider and exact agent ID across wor
   assert(filterCards(cards, { ...filters, query: 'PASEO-KANBAN' }).length > 1);
   assert.equal(filterCards(cards, { ...filters, query: '数据库', workspaceId: 'workspace-web' }).length, 0);
 });
-test('pinned and priority sorting and hiding preserve metadata', () => {
+test('favorites do not change board sorting while favorite filtering and hiding still work', () => {
   const cards = buildCards(fixture()); const filters = { query: '', projectId: '', provider: '', pinned: false, attention: false, hidden: false };
-  assert.equal(filterCards(cards, filters)[0].pinned, true);
+  const favorite = cards.find(card => card.pinned)!;
+  const regular = cards.find(card => !card.pinned)!;
+  favorite.priority = regular.priority = 'medium'; favorite.order = 2; regular.order = 1;
+  assert.equal(filterCards([favorite, regular], filters)[0].id, regular.id);
+  assert.deepEqual(filterCards([favorite, regular], { ...filters, pinned: true }).map(card => card.id), [favorite.id]);
   cards[0].hidden = true; assert(!filterCards(cards, filters).some(c => c.id === cards[0].id));
   assert.equal(filterCards(cards, { ...filters, hidden: true })[0].id, cards[0].id);
+});
+
+
+
+test('failed turn can stay done until a new prompt, live work or permission', () => {
+  const agent = { ...fixture().agents[2], status: 'error', activeTurn: false, pendingPermission: false, attentionReason: null };
+  const meta = metadataSchema.parse({ stage: 'done', stageTurn: agent.lastUserMessageAt });
+  assert.equal(resolveStage(meta, agent), 'done');
+  assert.equal(resolveStage(meta, { ...agent, lastUserMessageAt: 'new-turn' }), 'blocked');
+  assert.equal(resolveStage(meta, { ...agent, activeTurn: true }), 'blocked');
+  assert.equal(resolveStage(meta, { ...agent, pendingPermission: true }), 'blocked');
+  assert.equal(resolveStage(meta, { ...agent, attentionReason: 'permission' }), 'blocked');
+});
+
+test('legacy goal fields are retired and watch later defaults without changing stages', () => {
+  const legacy = fixture();
+  const loaded = storeSchema.parse({ ...legacy.store, goals: { legacy: {} } });
+  assert.equal('goals' in loaded, false);
+  assert.equal(metadataSchema.parse({ goalId: 'old-goal' }).watchLater, false);
+  assert.deepEqual(patchInput.parse({ id: 'task:test', patch: { watchLater: true } }).patch, { watchLater: true });
 });

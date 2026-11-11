@@ -1,7 +1,8 @@
 import { createElement } from 'react';
-import type { PluginIconProps } from '@getpaseo/plugin/client';
+import type { IconProps } from '@getpaseo/plugin/client/ui';
 
 const paths: Record<string, string[]> = {
+  Clock: ['M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0', 'M12 6v6l4 2'],
   ArrowUp: ['M12 19V5', 'm5 12 7-7 7 7'], ArrowDown: ['M12 5v14', 'm5 12 7 7 7-7'],
   ChevronDown: ['m6 9 6 6 6-6'], ChevronRight: ['m9 6 6 6-6 6'], Pencil: ['m16 3 5 5-12 12-6 1 1-6Z', 'm14 5 5 5'],
   Plus: ['M12 5v14', 'M5 12h14'], X: ['m6 6 12 12', 'M6 18 18 6'], Search: ['M21 21l-4.5-4.5', 'M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0'],
@@ -23,7 +24,7 @@ const paths: Record<string, string[]> = {
   File: ['M6 2h9l5 5v15H6Z', 'M14 2v6h6'], Trash2: ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 16H6L5 6', 'M10 11v6', 'M14 11v6'],
   Image: ['M3 4h18v16H3Z', 'm3 17 5-5 4 4 3-3 3 4', 'M16 9h.01'],
 };
-export function Icon({ name, size = 16, color }: PluginIconProps) {
-  return createElement('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: color, strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, style: { flexShrink: 0 } }, ...(paths[name] ?? paths.CircleDot).map((d, i) => createElement('path', { d, key: i })));
+export function Icon({ name, size = 16, color }: IconProps) {
+  return createElement('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: color, strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, style: { flexShrink: 0 } }, ...(paths[name ?? 'CircleDot'] ?? paths.CircleDot).map((d, i) => createElement('path', { d, key: i })));
 }
 export function useRpc() { throw new Error('Preview must use the injected BoardApi.'); }

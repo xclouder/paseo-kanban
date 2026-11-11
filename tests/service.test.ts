@@ -550,7 +550,7 @@ test('batch hide removes every completed task from the board atomically', async 
 });
 test('real installed SDK splits provider/model and forwards workspace and prompt', async () => {
   const calls: Record<string, unknown>[] = [];
-  const driver = { createAgent: async (options: Record<string,unknown>) => { calls.push(options); return { id: 'real-sdk-agent' }; } };
+  const driver = { getLastServerInfoMessage: () => ({ serverId: 'test-server' }), createAgent: async (options: Record<string,unknown>) => { calls.push(options); return { id: 'real-sdk-agent' }; } };
   const api = createPaseoApi(driver as never);
   const attachments = [{ type: 'uploaded_file' as const, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', fileName: 'brief.pdf', mimeType: 'application/pdf', size: 12, path: 'C:/uploads/brief.pdf' }];
   const result = await api.agents.create({ config: { provider: 'codex/test-model', modeId: 'full-access', thinkingOptionId: 'high' }, cwd: 'C:/test', prompt: 'implement', title: 'Task', attachments });
@@ -562,4 +562,21 @@ test('real installed SDK splits provider/model and forwards workspace and prompt
   assert.deepEqual(calls[0].attachments, attachments);
   await assert.rejects(() => api.agents.create({ config: { provider: 'codex' }, cwd: 'C:/test' }), /provider\/model/);
   assert.equal(calls.length, 1);
+});
+
+
+
+test('failed sessions complete directly and watch later persists independently', async t => {
+  const { service, store } = await setup(t); const mock = mockApi();
+  const agent = mock.agents[2];
+  agent.status = 'error'; agent.activeTurn = null; agent.pendingPermissions = []; agent.attentionReason = null;
+  const id = `agent:${agent.id}`;
+  await service.move({ id, stage: 'done' }, mock.api);
+  await service.patch({ id, patch: { watchLater: true } }, mock.api);
+  assert.equal(buildCards(await service.read(mock.api)).find(card => card.id === id)?.stage, 'done');
+  assert.equal((await new Store(store.file).read()).sessions[agent.id].watchLater, true);
+  await service.patch({ id, patch: { watchLater: false } }, mock.api);
+  assert.equal((await store.read()).sessions[agent.id].stage, 'done');
+  agent.pendingPermissions = [{ id: 'permission' }];
+  await assert.rejects(service.move({ id, stage: 'done' }, mock.api), /授权/);
 });

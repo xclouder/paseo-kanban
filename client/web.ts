@@ -48,9 +48,10 @@ export function WebSortTarget({ enabled, disabled, c, drag, onProject, onGroup, 
 }
 
 /** Browser-only card drag source. Native always renders a plain View. */
-export function WebDragItem({ id, enabled, children, onDrag }: { id: string; enabled: boolean; children: ReactNode; onDrag(id: string | null): void }) {
+export function WebDragItem({ id, enabled, children, onDrag, onContextMenu }: { onContextMenu?(): void; id: string; enabled: boolean; children: ReactNode; onDrag(id: string | null): void }) {
   if (Platform.OS !== 'web' || !enabled) return createElement(View, null, children);
   return createElement('div', {
+    onContextMenu: (event: MouseEvent) => { if (onContextMenu) { event.preventDefault(); onContextMenu(); } },
     draggable: true,
     style: { minWidth: 0, width: '100%' },
     onDragStart: (event: DragEvent) => { event.dataTransfer.setData('application/x-paseo-kanban', id); event.dataTransfer.effectAllowed = 'move'; onDrag(id); },

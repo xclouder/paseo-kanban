@@ -198,6 +198,20 @@ test('favorite a conversation and find it again from common conversations', asyn
   await expect(page.getByRole('button', { name: `取消收藏会话 ${title}`, exact: true })).toBeVisible();
 });
 
+test('favoriting a review task does not move it ahead of other review tasks', async ({ page }) => {
+  await page.goto('/');
+  const review = page.getByTestId('column-review');
+  const cards = review.locator('[data-testid^="card-"]');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0)).toContainText('审核工作区导航与搜索交互');
+  await expect(cards.nth(1)).toContainText('补全 API 错误处理测试');
+
+  await cards.nth(1).getByRole('button', { name: '收藏会话 补全 API 错误处理测试', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('已收藏为常用会话');
+  await expect(cards.nth(0)).toContainText('审核工作区导航与搜索交互');
+  await expect(cards.nth(1)).toContainText('补全 API 错误处理测试');
+});
+
 test('common conversations remain available after they are removed from the board', async ({ page }) => {
   await page.goto('/');
   const title = '登录流程增加 OAuth 回调处理';

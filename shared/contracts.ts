@@ -28,7 +28,7 @@ export const patchInput = z.object({ id: z.string().min(1), patch: z.object({
   description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
   tags: z.array(z.string().trim().min(1).max(40)).max(12).optional(),
   priority: z.enum(['high', 'medium', 'low']).optional(),
-  pinned: z.boolean().optional(), hidden: z.boolean().optional(),
+  pinned: z.boolean().optional(), watchLater: z.boolean().optional(), hidden: z.boolean().optional(),
   workspaceId: z.string().min(1).optional(),
   attachmentAdditions: z.array(createAttachmentInput).max(MAX_ATTACHMENT_FILES).optional(),
 }) });
