@@ -9,6 +9,7 @@ import type { AddInboxInput, CompleteReviewInput, CreateInput, CreateProjectWork
 import type { KanbanSettingsPatch } from '../shared/settings';
 
 const service = new BoardService(new Store(join(process.env.PASEO_HOME || join(homedir(), '.paseo'), 'paseo-kanban', 'board.json')));
+export const readProviders = logOperation('readProviders', (_: object, { paseo }: PluginHandlerContext) => service.readProviders(paseo));
 export const read = logOperation('read', (_: object, { paseo }: PluginHandlerContext) => service.read(paseo));
 export const readSettings = logOperation('readSettings', () => service.readSettings());
 export const saveSettings = logOperation('saveSettings', (input: KanbanSettingsPatch) => service.saveSettings(input));

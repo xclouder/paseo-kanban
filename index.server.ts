@@ -1,9 +1,10 @@
 import type { PluginServerContext } from '@getpaseo/plugin/server';
-import { addInboxEntry, completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, hideDoneCards, launchTask, moveCard, organizeProjects, patchCard, patchInboxEntry, readBoard, readKanbanSettings, saveKanbanSettings } from './shared/contracts';
-import { addInbox, completeReview, create, createProjectWorkspace as createProjectWorkspaceHandler, deleteInbox, hideDone, launch, move, organize, patch, patchInbox, read, readSettings, remove, saveSettings } from './server/handlers';
+import { addInboxEntry, completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, hideDoneCards, launchTask, moveCard, organizeProjects, patchCard, patchInboxEntry, readBoard, readProviderOptions, readKanbanSettings, saveKanbanSettings } from './shared/contracts';
+import { addInbox, completeReview, create, createProjectWorkspace as createProjectWorkspaceHandler, deleteInbox, hideDone, launch, move, organize, patch, patchInbox, read, readProviders, readSettings, remove, saveSettings } from './server/handlers';
 
 export default function contribute(server: PluginServerContext) {
   server.handle(readBoard, read);
+  server.handle(readProviderOptions, readProviders);
   server.handle(readKanbanSettings, readSettings);
   server.handle(saveKanbanSettings, saveSettings);
   server.handle(organizeProjects, organize);

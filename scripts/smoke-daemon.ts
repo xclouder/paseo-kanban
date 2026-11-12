@@ -13,7 +13,7 @@ const client = createPaseoClient({ url, reconnect: { enabled: false }, connectTi
 try {
   await client.connect();
   const service = new BoardService(new Store(join(tmpdir(), `paseo-kanban-readonly-${randomUUID()}`, 'board.json')));
-  const snapshot = snapshotSchema.parse(await service.read(client));
+  const snapshot = snapshotSchema.parse({ ...await service.read(client), ...await service.readProviders(client) });
   const cards = buildCards(snapshot);
   console.log(JSON.stringify({ ok: true, sessions: snapshot.agents.length, workspaces: snapshot.workspaces.length, cards: cards.length, providers: snapshot.providers, selectableModels: snapshot.models.length, providerError: snapshot.providerError }, null, 2));
 } finally { await client.close(); }

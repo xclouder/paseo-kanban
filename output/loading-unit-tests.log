@@ -1,0 +1,296 @@
+
+> paseo-kanban@0.1.0 test
+> tsx --test tests/*.test.ts
+
+✔ snapshot cache is host scoped, validated, age bounded, and tolerates unavailable storage (10.8929ms)
+✔ a stalled board read ends with a retryable error (17.2819ms)
+✔ opens the board for Ctrl/Command+Shift+K only (0.4962ms)
+✔ registers and removes the global board shortcut (0.3045ms)
+✔ does not push another board surface when the board is already active (0.1087ms)
+✔ only one duplicate global listener handles the same shortcut event (0.1153ms)
+✔ custom task templates validate editable task defaults (2.6095ms)
+✔ partial RPC inputs do not introduce defaults or erase unrelated metadata (1.4484ms)
+✔ legacy board files gain an empty Inbox without a version migration (0.9464ms)
+✔ legacy Inbox entries gain an empty description without a version migration (0.4059ms)
+✔ Inbox accepts a longer title and an optional detailed description (0.4161ms)
+✔ draft patches accept a workspace and newly pasted attachments without adding defaults (0.5945ms)
+✔ batch completion accepts every visible reviewed task without an arbitrary count limit (0.9119ms)
+✔ task launch configuration requires provider/model (0.8465ms)
+✔ Full Access is preferred by provider id or label, with supported fallback (0.249ms)
+✔ High thinking is preferred with provider and supported fallbacks (0.296ms)
+✔ create RPC preserves a selected mode and legacy tasks do not gain new permissions (1.1641ms)
+✔ create RPC preserves a selected thinking mode while legacy tasks remain compatible (0.1575ms)
+✔ create RPC validates attachment metadata and applies an empty default (0.4708ms)
+✔ attachments may exceed 20 MB while staying within the total limit (0.0834ms)
+✔ project base directory settings accept empty or absolute paths only (0.7253ms)
+✔ all existing sessions appear without a manual import (2.272ms)
+✔ running, permission, errors and finished turns map to workflow stages (0.4842ms)
+✔ manual running stage does not mask finish, permission or failure (0.2966ms)
+✔ done survives metadata updates but reopens on a new prompt (0.2477ms)
+✔ linked task has one card and retains its identity if session disappears (0.4821ms)
+✔ search matches Chinese tags, paths, provider and exact agent ID across workspaces (5.839ms)
+✔ favorites do not change board sorting while favorite filtering and hiding still work (0.4141ms)
+✔ failed turn can stay done until a new prompt, live work or permission (0.1766ms)
+✔ legacy goal fields are retired and watch later defaults without changing stages (0.4978ms)
+✔ native plugin client graph has no react-dom runtime dependency (6.9325ms)
+✔ iOS and Android client artifacts load and register without browser globals (1198.2003ms)
+✔ settings navigation bridge opens the plugin settings and cleans up safely (0.4787ms)
+✔ legacy boards gain an empty layout and new projects remain discoverable after sorting (3.5599ms)
+✔ group operations preserve membership, ordering and projects on group deletion (1.7325ms)
+✔ stale move destinations are rejected without changing saved layout (0.3872ms)
+✔ opens Inbox for Ctrl+Shift+I only (0.5565ms)
+✔ registers and removes the global Inbox shortcut (0.2189ms)
+✔ only one duplicate global listener opens the Inbox modal (0.098ms)
+✔ model presets survive reload and independent settings updates (22.277ms)
+✔ stale preset writes cannot overwrite another client update (4.7806ms)
+✔ custom task templates persist independently and reject stale writes (6.7702ms)
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"702d5bc7-30d1-448b-882b-97c37e475dc6","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"702d5bc7-30d1-448b-882b-97c37e475dc6","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"702d5bc7-30d1-448b-882b-97c37e475dc6","elapsedMs":1}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":1}
+✔ an active turn stays running after the client reconnects with an idle status (4.8249ms)
+✔ project organization merges concurrent edits and survives store reload without changing tasks (13.4831ms)
+✔ creates a project directory and opens its first Paseo workspace (5.5637ms)
+✔ new projects reject unsafe names, relative roots, and existing directories (4.6915ms)
+✔ a failed Paseo workspace open only rolls back the new empty project directory (3.2377ms)
+✔ pagination loads beyond first hundred and rejects cursor loops (0.2386ms)
+✔ store serializes concurrent writers and survives reload (45.0879ms)
+✔ damaged store is not overwritten by writes (1.8595ms)
+✔ a failed operation releases the writer lock (3.2429ms)
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"c0030ff4-44b4-4233-bd39-d7c44630a437","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"c0030ff4-44b4-4233-bd39-d7c44630a437","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"c0030ff4-44b4-4233-bd39-d7c44630a437","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":1}
+✔ read imports sessions and exposes concrete provider model options (1.9779ms)
+{"plugin":"paseo-kanban","operation":"read","phase":"providers","elapsedMs":40}
+{"plugin":"paseo-kanban","operation":"read","phase":"providers","elapsedMs":40}
+{"plugin":"paseo-kanban","operation":"read","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"411c6531-7880-409b-b313-d9fc9cf6fd18","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"411c6531-7880-409b-b313-d9fc9cf6fd18","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"411c6531-7880-409b-b313-d9fc9cf6fd18","elapsedMs":1}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":1}
+✔ provider snapshot timeout does not block reads and retries after a cooldown (44.2053ms)
+{"plugin":"paseo-kanban","operation":"read","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"providers","elapsedMs":0}
+✔ partial provider snapshots keep ready models during the retry cooldown (1.1147ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":1}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ create is a draft; concurrent launch invokes provider exactly once (8.3202ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ launch requires confirmation when another agent is running in the same workspace (7.4164ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+✔ a workspace confirmation cannot authorize a launch after the draft moves elsewhere (6.2372ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ launch starts immediately when running agents belong only to other workspaces (6.5907ms)
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"ab364f96-3d9c-4282-9696-66007b9c865b","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"ab364f96-3d9c-4282-9696-66007b9c865b","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"ab364f96-3d9c-4282-9696-66007b9c865b","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":1}
+✔ Inbox capture is idempotent and conversion removes the entry only after task creation (24.3313ms)
+✔ deleting an Inbox idea removes its stored attachments (6.7321ms)
+✔ editing an Inbox idea updates its title and optional description (10.2021ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ launch keeps the title out of the prompt body (16.5818ms)
+✔ retrying the same create request returns the persisted task without duplicating it (4.7959ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ attachments persist outside the board file and are forwarded on launch (9.1283ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ a never-started task can change workspace and add pasted attachments (13.0684ms)
+✔ a failed attachment patch removes files written earlier in the same patch (8.1181ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ deleting a never-run task removes its stored attachments and launched tasks are protected (10.9148ms)
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":1}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":1}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":1}
+✔ board reads recover interrupted attachment deletes and remove orphan tombstones (36.3214ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+✔ launch rejects attachment paths outside the task-owned directory (8.0464ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":1}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ selected restrictive mode survives reload and is forwarded on launch (6.6068ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ selected thinking mode survives reload and is forwarded on launch (5.7118ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+✔ invalid or unavailable thinking mode fails before any launch state is written (2.7539ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+✔ invalid or unavailable mode fails before any launch state is written (3.3977ms)
+✔ mode discovery failure does not silently launch with other permissions (0.8153ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ legacy drafts without a mode migrate to Full Access before the first prompt (5.721ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+✔ lost response is reconciled by task label without executing twice (6.9993ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+✔ ambiguous transport failure does not silently start a duplicate (7.1235ms)
+✔ partial metadata updates merge and moving active agents to done fails (5.0016ms)
+✔ batch completion marks every reviewed task done atomically (3.0132ms)
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"ac0f7033-2cb5-44a1-8a79-f6689ba18fa2","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"ac0f7033-2cb5-44a1-8a79-f6689ba18fa2","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"ac0f7033-2cb5-44a1-8a79-f6689ba18fa2","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"a1acea44-0c38-47bc-8ab8-a15142bd0215","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"a1acea44-0c38-47bc-8ab8-a15142bd0215","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"a1acea44-0c38-47bc-8ab8-a15142bd0215","elapsedMs":0}
+✔ batch hide removes every completed task from the board atomically (7.6943ms)
+✔ real installed SDK splits provider/model and forwards workspace and prompt (0.6966ms)
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"7822e112-d639-49db-8899-449d3e38560e","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"7822e112-d639-49db-8899-449d3e38560e","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"7822e112-d639-49db-8899-449d3e38560e","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"5afb078d-aa30-4538-8c39-5f3592cd9b7d","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"5afb078d-aa30-4538-8c39-5f3592cd9b7d","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"5afb078d-aa30-4538-8c39-5f3592cd9b7d","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":0}
+✔ failed sessions complete directly and watch later persists independently (6.6803ms)
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"2c140ac5-b3c9-4dc9-8eee-5f3597e9a426","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"2c140ac5-b3c9-4dc9-8eee-5f3597e9a426","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"2c140ac5-b3c9-4dc9-8eee-5f3597e9a426","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":0}
+✔ board read bypasses a busy writer and never waits for provider discovery or attachment maintenance (4.6451ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"workspaces","requestId":"700035c5-b853-4b9e-97d0-07fab74a8ae2","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"agents","requestId":"700035c5-b853-4b9e-97d0-07fab74a8ae2","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"read","phase":"store","requestId":"700035c5-b853-4b9e-97d0-07fab74a8ae2","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"maintenance","phase":"attachments","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":4}
+✔ slow agent creation leaves board reads and writes available and merges metadata on completion (10.1912ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":1}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+✔ draft changes during remote launch validation cannot start stale task contents (5.586ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+✔ concurrent launches in one workspace still require confirmation for the second task (7.4201ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":28}
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":0}
+✔ a timed out launch validation releases the workspace queue without reserving the task (39.2107ms)
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"workspace","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"agents","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"providers","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"lockWait","elapsedMs":0}
+{"plugin":"paseo-kanban","operation":"launch","phase":"createAgent","elapsedMs":20}
+{"plugin":"paseo-kanban","operation":"launch","phase":"reconcile","elapsedMs":0}
+✔ a timed out create stays uncertain and a late success is linked without duplicate execution (30.665ms)
+ℹ tests 88
+ℹ suites 0
+ℹ pass 88
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7629.359

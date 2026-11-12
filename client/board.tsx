@@ -5,19 +5,21 @@ import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/pl
 import { useRpc } from '@getpaseo/plugin/client';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { addInboxEntry, completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, hideDoneCards, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, patchInboxEntry, readBoard, type AddInboxInput, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type HideDoneInput, type LaunchInput, type LaunchResult, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
-import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, filterCards, MAX_DESCRIPTION_LENGTH, MAX_TITLE_LENGTH, priorityNames, relativeTime, stageNames, stages, type Card, type InboxEntry, type Snapshot, type Stage, type Task, type TaskAttachment, type Workspace } from '../shared/model';
+import { addInboxEntry, completeReviewCards, createProjectWorkspace, createTask, deleteInboxEntry, deleteTask, hideDoneCards, launchTask, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_TOTAL_SIZE, moveCard, patchCard, patchInboxEntry, readBoard, readProviderOptions, type AddInboxInput, type CompleteReviewInput, type CreateAttachmentInput, type CreateInput, type CreateProjectWorkspaceInput, type HideDoneInput, type LaunchInput, type LaunchResult, type MoveInput, type PatchInboxInput, type PatchInput } from '../shared/contracts';
+import { agentIsRunning, buildCards, defaultModeId, defaultThinkingOptionId, filterCards, MAX_DESCRIPTION_LENGTH, MAX_TITLE_LENGTH, priorityNames, relativeTime, stageNames, stages, type Card, type InboxEntry, type ProviderOptions, type Snapshot, type Stage, type Task, type TaskAttachment, type Workspace } from '../shared/model';
 import { organizeProjects } from '../shared/contracts';
 import type { ProjectAction } from '../shared/projects';
 import { ProjectSidebar } from './project-sidebar';
 import { INBOX_CHANGED_EVENT, QUICK_INBOX_MODAL_TEST_ID, openQuickInbox, setQuickInboxPalette } from './quick-inbox';
 import { BOARD_KEYBOARD_SCOPE_TEST_ID_PREFIX, isActiveBoardKeyboardScope, isOpenBoardShortcut } from './board-shortcut';
 import { WebDragItem, WebDropZone } from './web';
+import { readCachedBoard, saveCachedBoard, readWithTimeout } from './board-cache';
 import { openKanbanSettings } from './open-settings';
 
 export interface BoardApi {
   organize(action: ProjectAction): Promise<unknown>;
   read(): Promise<Snapshot>;
+  readProviders(): Promise<ProviderOptions>;
   patch(input: PatchInput): Promise<unknown>;
   move(input: MoveInput): Promise<unknown>;
   completeReview(input: CompleteReviewInput): Promise<{ ok: boolean; count: number }>;
@@ -39,8 +41,9 @@ export function KanbanWorkspace(props: PluginWorkspacePanelProps) {
 }
 function ConnectedBoard(props: PluginSurfaceProps & { workspaceId?: string }) {
   const organize = useRpc(organizeProjects), createProject = useRpc(createProjectWorkspace);
+  const readProviders = useRpc(readProviderOptions);
   const read = useRpc(readBoard), patch = useRpc(patchCard), move = useRpc(moveCard), completeReview = useRpc(completeReviewCards), hideDone = useRpc(hideDoneCards), create = useRpc(createTask), addInbox = useRpc(addInboxEntry), patchInbox = useRpc(patchInboxEntry), removeInbox = useRpc(deleteInboxEntry), launch = useRpc(launchTask), remove = useRpc(deleteTask);
-  const api = useMemo<BoardApi>(() => ({ read: () => read({}), patch, move, completeReview, hideDone, create, addInbox, createProject, patchInbox, removeInbox, launch, remove, organize }), [read, patch, move, completeReview, hideDone, create, addInbox, createProject, patchInbox, removeInbox, launch, remove, organize]);
+  const api = useMemo<BoardApi>(() => ({ read: () => read({}), readProviders: () => readProviders({}), patch, move, completeReview, hideDone, create, addInbox, createProject, patchInbox, removeInbox, launch, remove, organize }), [read, readProviders, patch, move, completeReview, hideDone, create, addInbox, createProject, patchInbox, removeInbox, launch, remove, organize]);
   return <BoardView {...props} api={api} />;
 }
 
@@ -206,11 +209,31 @@ function customizePaseoSurfaceReturn(color: string) {
   };
 }
 
+function boardStorage(web: boolean) {
+  try { return web && typeof window !== 'undefined' ? window.localStorage : undefined; }
+  catch { return undefined; }
+}
+
 export function BoardView({ theme, host, layout, navigation, workspaceId, api, preview = false }: PluginSurfaceProps & { workspaceId?: string; api: BoardApi; preview?: boolean }) {
   const c = theme.colors;
   const queryClient = useQueryClient();
   const queryKey = ['paseo-kanban', host.id];
-  const board = useQuery({ queryKey, queryFn: () => api.read(), refetchInterval: 5000, retry: 1 });
+  const [cached] = useState(() => readCachedBoard(host.id, boardStorage(layout.platform === 'web')));
+  const boardQuery = useQuery({ queryKey, queryFn: () => readWithTimeout(() => api.read()), initialData: cached, initialDataUpdatedAt: cached ? Date.parse(cached.fetchedAt) : undefined, refetchInterval: 5000, retry: 1 });
+  const catalog = useQuery({ queryKey: ['paseo-kanban-providers', host.id], queryFn: () => api.readProviders(), initialData: cached ? { providers: cached.providers, models: cached.models, modes: cached.modes, providerError: cached.providerError } : undefined, initialDataUpdatedAt: cached ? Date.parse(cached.fetchedAt) : undefined, refetchInterval: 60000, staleTime: 30000, retry: 1 });
+  const snapshot = useMemo(() => boardQuery.data ? { ...boardQuery.data, ...(catalog.data ?? {}),
+    providerError: catalog.isError ? '模型列表同步失败，请稍后刷新；仍可查看任务。' : catalog.data?.providerError ?? (catalog.isPending ? '模型和运行模式正在加载，仍可查看任务。' : undefined) } : undefined, [boardQuery.data, catalog.data, catalog.isError, catalog.isPending]);
+  const board = { ...boardQuery, data: snapshot };
+  useEffect(() => {
+    if (snapshot && boardQuery.isFetchedAfterMount && !boardQuery.isError) saveCachedBoard(host.id, snapshot, boardStorage(layout.platform === 'web'));
+  }, [host.id, layout.platform, snapshot, boardQuery.isFetchedAfterMount, boardQuery.isError]);
+  const refreshBoard = () => Promise.all([boardQuery.refetch(), catalog.refetch()]);
+  const [slowLoading, setSlowLoading] = useState(false);
+  useEffect(() => {
+    if (!boardQuery.isPending) { setSlowLoading(false); return; }
+    const timer = setTimeout(() => setSlowLoading(true), 3000);
+    return () => clearTimeout(timer);
+  }, [boardQuery.isPending]);
   const [query, setQuery] = useState('');
   const [project, setProject] = useState('');
   const [provider, setProvider] = useState('');
@@ -250,8 +273,8 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const mutation = useMutation({ mutationFn: (run: () => Promise<unknown>) => run(), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey }); }, onError: error => setMessage({ text: errorText(error), error: true }) });
   const mutationPendingRef = useRef(mutation.isPending);
   mutationPendingRef.current = mutation.isPending;
-  const busy = mutation.isPending || !board.data || board.isError;
-  const notice: Notice | null = board.isError ? { text: `同步失败，操作已暂停。${errorText(board.error)}`, error: true, retry: true } : message;
+  const busy = mutation.isPending || !board.data || !boardQuery.isFetchedAfterMount || board.isError;
+  const notice: Notice | null = board.isError ? { text: `${board.data ? '正在显示上次数据，' : ''}同步失败，操作已暂停。${errorText(board.error)}`, error: true, retry: true } : message;
   const projectBaseDirectory = board.data?.store.settings.projectBaseDirectory ?? '';
   const run = async (action: () => Promise<unknown>, success?: string) => {
     if (busy) return false;
@@ -540,8 +563,8 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
             {!layout.compact && !laterView && !pinned && <Button c={c} icon="CircleAlert" active={attention} onPress={() => setAttention(!attention)}>需处理</Button>}
             {!layout.compact && !laterView && !pinned && <Button c={c} icon="Archive" active={hidden} onPress={() => setHidden(!hidden)} label={hidden ? '返回活动任务' : '查看已收起任务'} />}
             <View style={{ flex: 1 }} />
-            {!layout.compact && (mutation.isPending ? <ActivityIndicator size="small" color={c.accent} /> : <Text style={{ color: c.foregroundMuted, fontSize: 10 }}>{board.isFetching ? '同步中' : '每 5 秒同步'}</Text>)}
-            {!layout.compact && <Button c={c} icon="RefreshCw" label="刷新看板" onPress={() => void board.refetch()} disabled={board.isFetching} />}
+            {!layout.compact && (mutation.isPending ? <ActivityIndicator size="small" color={c.accent} /> : <Text style={{ color: c.foregroundMuted, fontSize: 10 }}>{!boardQuery.isFetchedAfterMount ? `上次数据 · ${relativeTime(board.data?.fetchedAt ?? '')} · 同步中` : board.isFetching ? '同步中' : `更新于 ${relativeTime(board.data?.fetchedAt ?? '')}`}</Text>)}
+            {!layout.compact && <Button c={c} icon="RefreshCw" label="刷新看板" onPress={() => void refreshBoard()} disabled={board.isFetching} />}
           </View>}
           {!laterView && !inboxView && !pinned && !layout.compact && (provider || (board.data?.providers.length ?? 0) > 1) && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ ...row, gap: 7 }}>
             <Text style={{ color: c.foregroundMuted, fontSize: 11, marginRight: 4 }}>Agent</Text>
@@ -549,12 +572,13 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
             {[...new Set([...(board.data?.providers ?? []), ...all.map(card => card.provider)])].filter(Boolean).map(p => <Button key={p} c={c} small active={provider === p} onPress={() => setProvider(p)}>{p}</Button>)}
           </ScrollView>}
         </View>
+        {board.data && !boardQuery.isFetchedAfterMount && <View role="status" style={{ padding: 10, backgroundColor: c.surface2 }}><Text style={{ color: c.foregroundMuted, fontSize: 12 }}>正在显示上次数据（{relativeTime(board.data.fetchedAt)}），同步完成后可操作。</Text></View>}
         {!active && notice && <View accessibilityRole="alert" style={{ ...row, gap: 9, padding: 12, backgroundColor: c.surface2 }}>
           <Icon name={notice.error ? 'CircleAlert' : 'Check'} size={16} color={notice.error ? c.statusDanger : c.statusSuccess} />
           <Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text>
           <Button c={c} small onPress={() => notice.retry ? void board.refetch() : setMessage(null)}>{notice.retry ? '重试' : '关闭'}</Button>
         </View>}
-        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在整理你的会话…</Text></View> : laterView ? <LaterPanel c={c} cards={laterCards} busy={busy} select={setSelected} remove={card => void toggleLater(card)} /> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} compact={layout.compact} busy={busy} add={layout.compact ? input => run(() => api.addInbox(input), '已存入 Inbox') : undefined} createTask={entry => openCreate(entry)} edit={input => run(() => api.patchInbox(input), 'Inbox 条目已更新')} remove={removeInboxOptimistically} /> : pinned ? <FavoritePanel c={c} cards={favoriteCards} total={scope.filter(card => card.pinned).length} query={query} compact={layout.compact} busy={busy} navigation={navigation} clearSearch={() => setQuery('')} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: false } }), '已取消收藏')} /> : layout.compact ? <MobileTaskPicker c={c} cards={visible} busy={busy} openCreate={() => openCreate()} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} launch={openAndLaunch} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: !card.pinned } }), card.pinned ? '已取消收藏' : '已收藏为常用会话')} /> : <View style={{ flex: 1, minHeight: 0 }}>
+        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在加载看板…</Text>{slowLoading && <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>正在等待 Paseo 返回会话或工作区，连接较慢…</Text>}</View> : laterView ? <LaterPanel c={c} cards={laterCards} busy={busy} select={setSelected} remove={card => void toggleLater(card)} /> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} compact={layout.compact} busy={busy} add={layout.compact ? input => run(() => api.addInbox(input), '已存入 Inbox') : undefined} createTask={entry => openCreate(entry)} edit={input => run(() => api.patchInbox(input), 'Inbox 条目已更新')} remove={removeInboxOptimistically} /> : pinned ? <FavoritePanel c={c} cards={favoriteCards} total={scope.filter(card => card.pinned).length} query={query} compact={layout.compact} busy={busy} navigation={navigation} clearSearch={() => setQuery('')} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: false } }), '已取消收藏')} /> : layout.compact ? <MobileTaskPicker c={c} cards={visible} busy={busy} openCreate={() => openCreate()} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} launch={openAndLaunch} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: !card.pinned } }), card.pinned ? '已取消收藏' : '已收藏为常用会话')} /> : <View style={{ flex: 1, minHeight: 0 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {visible.length === 0 && <View style={{ padding: 16, ...row, gap: 12 }}><Icon name="Search" size={17} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 12, flex: 1 }}>{all.length ? '没有符合条件的任务。试试清除筛选，或查看已收起任务。' : '还没有会话。新建一个任务，或在 Paseo 中打开会话后刷新。'}</Text>{all.length > 0 && <Button c={c} small onPress={reset}>清除筛选</Button>}</View>}
             <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: layout.compact ? 12 : 24, gap: 15, flexGrow: 1 }} showsHorizontalScrollIndicator>

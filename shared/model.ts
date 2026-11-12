@@ -90,6 +90,8 @@ export const snapshotSchema = z.object({
   providers: z.array(z.string()), models: z.array(z.object({ id: z.string(), label: z.string(), provider: z.string(), thinkingOptions: z.array(thinkingOptionSchema).default([]), defaultThinkingOptionId: z.string().optional() })), providerError: z.string().optional(), fetchedAt: z.string(),
   modes: z.array(runModeSchema).default([]),
 });
+export const providerOptionsSchema = snapshotSchema.pick({ providers: true, models: true, modes: true, providerError: true });
+export type ProviderOptions = z.infer<typeof providerOptionsSchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Card = Metadata & {
   id: string; title: string; stage: Stage; workspaceId: string | null;

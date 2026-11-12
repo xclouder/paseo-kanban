@@ -1,11 +1,12 @@
 import { defineRpc } from '@getpaseo/plugin';
 import { z } from 'zod';
-import { inboxEntrySchema, MAX_DESCRIPTION_LENGTH, MAX_TITLE_LENGTH, snapshotSchema, stages, taskSchema, workspaceSchema } from './model';
+import { inboxEntrySchema, MAX_DESCRIPTION_LENGTH, MAX_TITLE_LENGTH, providerOptionsSchema, snapshotSchema, stages, taskSchema, workspaceSchema } from './model';
 import { projectActionSchema } from './projects';
 import { kanbanSettingsPatchSchema, kanbanSettingsSchema } from './settings';
 
 export const organizeProjects = defineRpc({ name: 'board.organize-projects', input: projectActionSchema, output: z.object({ ok: z.boolean() }) });
 
+export const readProviderOptions = defineRpc({ name: 'board.providers.read', input: z.object({}), output: providerOptionsSchema });
 export const readBoard = defineRpc({ name: 'board.read', input: z.object({}), output: snapshotSchema });
 export const moveInput = z.object({ id: z.string().min(1), stage: z.enum(stages), beforeId: z.string().optional() });
 export const moveCard = defineRpc({ name: 'board.move', input: moveInput, output: z.object({ ok: z.boolean() }) });

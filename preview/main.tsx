@@ -26,7 +26,8 @@ const api: BoardApi = {
     localStorage.setItem(key, JSON.stringify(next));
     data = next;
   },
-  read: async () => { const catalog = fixture(); return structuredClone({ ...data, models: catalog.models, modes: catalog.modes, fetchedAt: new Date().toISOString() }); },
+  readProviders: async () => { if (location.search.includes('slow-providers')) await new Promise(resolve => setTimeout(resolve, 30000)); const { providers, models, modes, providerError } = fixture(); return { providers, models, modes, providerError }; },
+  read: async () => { if (location.search.includes('board-error')) throw new Error('模拟连接不可用'); if (location.search.includes('slow-board')) await new Promise(resolve => setTimeout(resolve, 30000)); return structuredClone({ ...data, providers: [], models: [], modes: [], fetchedAt: new Date().toISOString() }); },
   createProject: async ({ projectName }) => {
     if (data.workspaces.some(workspace => workspace.project === projectName)) throw new Error('项目目录已存在。');
     const baseDirectory = data.store.settings.projectBaseDirectory;

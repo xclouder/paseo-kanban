@@ -1,0 +1,95 @@
+
+> paseo-kanban@0.1.0 test:e2e
+> playwright test
+
+[WebServer] (node:193564) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:213340) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 58 tests using 12 workers
+
+(node:163232) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:158840) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:151540) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:206224) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:215104) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:71824) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:208592) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:97020) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:125932) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:122940) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:152988) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:111036) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok  2 tests\e2e\board.spec.ts:152:1 › mobile Inbox retry reuses its request id after a lost response (9.1s)
+  ok 11 tests\e2e\board.spec.ts:86:1 › Inbox restores an optimistically removed entry when deletion fails (9.0s)
+  ok  4 tests\e2e\board.spec.ts:141:1 › mobile task picker starts a ready task in one action (9.3s)
+  ok  6 tests\e2e\board.spec.ts:128:1 › mobile Inbox captures an idea without opening the full task form (9.3s)
+  ok  1 tests\e2e\board.spec.ts:166:1 › mobile keeps the independent common-conversation panel accessible (9.4s)
+  ok  5 tests\e2e\board.spec.ts:60:1 › the task-board shortcut leaves Inbox and the common-conversation panel (9.4s)
+  ok 12 tests\e2e\board.spec.ts:201:1 › favoriting a review task does not move it ahead of other review tasks (9.2s)
+  ok 10 tests\e2e\board.spec.ts:32:1 › create an Inbox idea with a pasted file and carry its defaults into the task (9.5s)
+  ok  8 tests\e2e\board.spec.ts:74:1 › Inbox removes an entry immediately while deletion finishes in the background (9.5s)
+  ok  3 tests\e2e\board.spec.ts:181:1 › favorite a conversation and find it again from common conversations (10.2s)
+  ok  7 tests\e2e\board.spec.ts:3:1 › capture a global Inbox item and convert it into a task (10.1s)
+  ok 15 tests\e2e\board.spec.ts:237:1 › global Inbox follows the Paseo light theme (1.0s)
+  ok  9 tests\e2e\board.spec.ts:97:1 › edit an Inbox entry before creating its task (10.4s)
+  ok 14 tests\e2e\board.spec.ts:228:1 › mobile one-tap launch preserves workspace conflict confirmation (1.2s)
+  ok 13 tests\e2e\board.spec.ts:215:1 › common conversations remain available after they are removed from the board (1.4s)
+  ok 16 tests\e2e\board.spec.ts:248:1 › global Inbox resolves the host theme before the board ever mounts (1.9s)
+  ok 18 tests\e2e\board.spec.ts:287:1 › only the active board opens a new-task dialog when stacked routes remain mounted (2.2s)
+  ok 19 tests\e2e\board.spec.ts:298:1 › search across projects and clear to restore all sessions (2.2s)
+  ok 17 tests\e2e\board.spec.ts:260:1 › global Inbox owns Escape and focus above a task dialog (2.4s)
+  ok 20 tests\e2e\board.spec.ts:311:1 › open task details in a centered modal without narrowing the board (2.2s)
+  ok 21 tests\e2e\board.spec.ts:328:1 › resize the project sidebar and restore its width (2.1s)
+  ok 22 tests\e2e\board.spec.ts:345:1 › auto-hide and toggle the Paseo host sidebar without hiding the board sidebar (2.7s)
+  ok 27 tests\e2e\board.spec.ts:483:1 › workspace board can target another existing workspace or a new project (2.9s)
+  ok 26 tests\e2e\board.spec.ts:472:1 › show an actionable error when a new project cannot be created (3.5s)
+  ok 29 tests\e2e\board.spec.ts:517:1 › paste goes only to the visible new-task attachment picker (2.7s)
+  ok 33 tests\e2e\board.spec.ts:622:1 › create a new task with Ctrl+Enter (2.5s)
+  ok 23 tests\e2e\board.spec.ts:381:1 › present the full-screen board exit as a return action instead of a second close icon (4.4s)
+  ok 32 tests\e2e\board.spec.ts:600:1 › do not close task details while a pasted attachment is still loading (2.7s)
+  ok 25 tests\e2e\board.spec.ts:457:1 › create a project workspace while creating a task (4.5s)
+  ok 24 tests\e2e\board.spec.ts:421:1 › filter workspaces, paste an attachment, and remember the default model (5.0s)
+  ok 30 tests\e2e\board.spec.ts:532:1 › confirm before discarding a changed new task with Escape (3.9s)
+  ok 28 tests\e2e\board.spec.ts:493:1 › change workspace and paste another attachment before a task starts (4.6s)
+  ok 39 tests\e2e\board.spec.ts:746:1 › legacy drafts show the Full Access mode that launch will migrate to (1.6s)
+  ok 34 tests\e2e\board.spec.ts:631:1 › do not submit with Ctrl+Enter while discard confirmation is open (3.2s)
+  ok 37 tests\e2e\board.spec.ts:713:1 › show launch failures inside the task modal and keep the task ready to retry (1.8s)
+  ok 35 tests\e2e\board.spec.ts:642:1 › do not close a new task while a pasted attachment is still loading (2.8s)
+  ok 31 tests\e2e\board.spec.ts:566:1 › confirm before discarding task edits with Escape (4.9s)
+  ok 38 tests\e2e\board.spec.ts:725:1 › run modes follow provider selection and persist an explicit choice (2.6s)
+  ok 43 tests\e2e\board.spec.ts:820:1 › complete all visible reviewed tasks in one action (2.2s)
+  ok 48 tests\e2e\loading.spec.ts:3:1 › slow model discovery does not block task cards or browsing (1.8s)
+  ok 44 tests\e2e\board.spec.ts:834:1 › hide all visible completed tasks from the board in one action (2.3s)
+  ok 47 tests\e2e\board.spec.ts:882:1 › running sessions cannot be marked done (2.1s)
+  ok 46 tests\e2e\board.spec.ts:864:1 › completing a card closes its detail and mobile light theme renders (2.5s)
+  ok 36 tests\e2e\board.spec.ts:661:1 › create, save, launch and navigate with persisted task metadata (4.7s)
+  ok 41 tests\e2e\board.spec.ts:781:1 › drag attachments into a new task and delete it before it runs (3.8s)
+  ok 40 tests\e2e\board.spec.ts:753:1 › launched legacy tasks do not guess an unrecorded thinking mode (4.1s)
+  ok 42 tests\e2e\board.spec.ts:803:1 › drag reviewed task to done, persist, hide and restore (3.4s)
+  ok 45 tests\e2e\board.spec.ts:848:1 › completion preserves dirty edits and cannot close a newly selected card (3.1s)
+  ok 53 tests\e2e\model-presets.spec.ts:46:1 › create form has no hard-coded templates and offers a settings shortcut (2.1s)
+  ok 58 tests\e2e\watch-later.spec.ts:29:1 › mobile watch later preserves task progress and fits the viewport (1.7s)
+  ok 54 tests\e2e\projects.spec.ts:3:1 › sidebar project drag sorting persists and selection still filters the board (2.2s)
+  ok 51 tests\e2e\model-presets.spec.ts:3:1 › create form keeps preset management out and applies a configured preset (2.8s)
+  ok 56 tests\e2e\projects.spec.ts:55:1 › assign a project to a group from its right-click menu (2.0s)
+  ok 52 tests\e2e\model-presets.spec.ts:27:1 › create form applies a persisted custom task template as an editable instance (2.6s)
+  ok 49 tests\e2e\loading.spec.ts:11:1 › cached cards appear during a slow reload and stay visible on sync failure (4.6s)
+  ok 57 tests\e2e\watch-later.spec.ts:3:1 › failed task completes and watch later can be saved, opened, searched and removed (2.7s)
+  ok 55 tests\e2e\projects.spec.ts:15:1 › create, assign, rename, collapse and delete project groups without losing projects (3.4s)
+  ok 50 tests\e2e\loading.spec.ts:27:1 › cold slow loads explain the wait and end with a retry action (6.8s)
+
+  58 passed (47.5s)

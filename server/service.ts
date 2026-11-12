@@ -10,17 +10,24 @@ import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { kanbanSettingsPatchSchema, kanbanSettingsSchema, type KanbanSettings, type KanbanSettingsPatch } from '../shared/settings';
 
 const agentRefreshConcurrency = 25;
+const attachmentMaintenanceIntervalMs = 60000;
+
+async function timed<T>(operation: string, phase: string, action: () => Promise<T>, requestId?: string): Promise<T> {
+  const started = performance.now();
+  try { return await action(); }
+  finally { console.log(JSON.stringify({ plugin: 'paseo-kanban', operation, phase, requestId, elapsedMs: Math.round(performance.now() - started) })); }
+}
 const providerDiscoveryTimeoutMs = 3000;
 const providerDiscoveryRetryMs = 30000;
 
-class ProviderDiscoveryTimeoutError extends Error {}
+class OperationTimeoutError extends Error {}
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ProviderDiscoveryTimeoutError('provider discovery timed out')), timeoutMs); }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new OperationTimeoutError('operation timed out')), timeoutMs); }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
@@ -63,8 +70,12 @@ function summarizeWorkspace(workspace: PaseoWorkspace): Workspace {
 }
 
 export class BoardService {
+  private readonly launches = new Map<string, Promise<import('../shared/contracts').LaunchResult>>();
+  private readonly workspaceLaunches = new Map<string, Promise<unknown>>();
+  private attachmentMaintenance?: Promise<void>;
+  private attachmentMaintenanceAt = -Infinity;
   private readonly attachmentCleanups = new Map<string, Promise<void>>();
-  constructor(readonly store: Store, private readonly providerTimeoutMs = providerDiscoveryTimeoutMs, private readonly providerRetryMs = providerDiscoveryRetryMs) {}
+  constructor(readonly store: Store, private readonly providerTimeoutMs = providerDiscoveryTimeoutMs, private readonly providerRetryMs = providerDiscoveryRetryMs, private readonly launchTimeoutMs = 60000) {}
   async organizeProjects(action: ProjectAction, paseo: PaseoApi) {
     return this.store.update(async data => {
       const workspaces = action.type === 'moveProject' ? await collectPages(cursor => paseo.workspaces.list({ page: { limit: 100, cursor } })) : [];
@@ -210,7 +221,7 @@ export class BoardService {
       if (value.providerError) this.providerLastError = value.providerError;
       return value;
     } catch (error) {
-      this.providerLastError = error instanceof ProviderDiscoveryTimeoutError
+      this.providerLastError = error instanceof OperationTimeoutError
         ? '读取 Agent 模型和运行模式超时，看板数据已继续同步；Paseo 恢复后会自动重试。'
         : '暂时无法读取 Agent 模型和运行模式列表，请稍后刷新。';
       this.providerRetryAfter = Date.now() + this.providerRetryMs;
@@ -221,18 +232,33 @@ export class BoardService {
     const entries = await collectPages(cursor => paseo.agents.list({ filter: { includeArchived: false }, sort: [{ key: 'created_at', direction: 'asc' }], page: { limit: 100, cursor } }));
     return [...new Map(entries.map(({ agent }) => [agent.id, summarizeAgent(agent)])).values()];
   }
-  async read(paseo: PaseoApi, reconcileAttachments = true): Promise<Snapshot> {
-    const storeRead = reconcileAttachments ? this.store.exclusive(async () => {
-      const data = await this.store.read();
-      await this.reconcileAttachmentStorage(data);
-      return data;
-    }) : this.store.read();
-    const [store, agents, workspaces, providers] = await Promise.all([
-      storeRead, this.agents(paseo),
-      collectPages(cursor => paseo.workspaces.list({ sort: [{ key: 'name', direction: 'asc' }], page: { limit: 100, cursor } })),
-      this.providerOptions(paseo),
+  async readProviders(paseo: PaseoApi) {
+    return timed('read', 'providers', () => this.providerOptions(paseo));
+  }
+  async maintainAttachments(force = false) {
+    if (this.attachmentMaintenance) return this.attachmentMaintenance;
+    if (!force && Date.now() - this.attachmentMaintenanceAt < attachmentMaintenanceIntervalMs) return;
+    const queued = performance.now();
+    const maintenance = this.store.exclusive(async () => {
+      console.log(JSON.stringify({ plugin: 'paseo-kanban', operation: 'maintenance', phase: 'lockWait', elapsedMs: Math.round(performance.now() - queued) }));
+      await timed('maintenance', 'attachments', async () => this.reconcileAttachmentStorage(await this.store.read()));
+      this.attachmentMaintenanceAt = Date.now();
+    });
+    this.attachmentMaintenance = maintenance;
+    try { await maintenance; }
+    finally { if (this.attachmentMaintenance === maintenance) this.attachmentMaintenance = undefined; }
+  }
+  async read(paseo: PaseoApi, maintain = true): Promise<Snapshot> {
+    const requestId = randomUUID();
+    // Store writes replace the file atomically. Reading the committed version needs no writer lock.
+    const [store, agents, workspaces] = await Promise.all([
+      timed('read', 'store', () => this.store.read(), requestId),
+      timed('read', 'agents', () => this.agents(paseo), requestId),
+      timed('read', 'workspaces', () => collectPages(cursor => paseo.workspaces.list({ sort: [{ key: 'name', direction: 'asc' }], page: { limit: 100, cursor } })), requestId),
     ]);
-    return { store, agents, workspaces: workspaces.map(summarizeWorkspace), ...providers, fetchedAt: new Date().toISOString() };
+    if (maintain) void this.maintainAttachments().catch(error => console.error(JSON.stringify({ plugin: 'paseo-kanban', operation: 'maintenance', error: String(error) })));
+    return { store, agents, workspaces: workspaces.map(summarizeWorkspace),
+      ...(this.providerLatest ?? { providers: [], models: [], modes: [] }), fetchedAt: new Date().toISOString() };
   }
 
   async readSettings(): Promise<KanbanSettings> {
@@ -503,50 +529,80 @@ export class BoardService {
       return { ok: true };
     });
   }
-  async launch(id: string, paseo: PaseoApi, confirmedWorkspaceId?: string) {
-    return this.store.exclusive(async () => {
-      const data = await this.store.read();
-      const task = data.tasks[id];
+  private async launchStep<T>(phase: string, action: () => Promise<T>): Promise<T> {
+    try { return await timed('launch', phase, () => withTimeout(action(), this.launchTimeoutMs)); }
+    catch (error) {
+      if (error instanceof OperationTimeoutError) throw new Error('等待 Paseo 启动操作超时，请检查连接后重试。');
+      throw error;
+    }
+  }
+  launch(id: string, paseo: PaseoApi, confirmedWorkspaceId?: string): Promise<import('../shared/contracts').LaunchResult> {
+    const existing = this.launches.get(id);
+    if (existing) return existing;
+    const launch = (async () => {
+      const task = (await this.store.read()).tasks[id];
       if (!task) throw new Error('任务不存在。');
-      if (task.agentId) return { status: 'started' as const, agentId: task.agentId };
-      if (!/^[^/]+\/.+$/.test(task.provider)) throw new Error('任务缺少具体模型，请新建任务并选择可用模型。');
-      // Reconcile a lost response before permitting any duplicate execution.
-      const existing = await collectPages(cursor => paseo.agents.list({ filter: { labels: { 'paseo-kanban-task': id }, includeArchived: true }, page: { limit: 100, cursor } }));
-      if (existing.length) {
-        task.agentId = existing[0].agent.id; task.launchState = 'started'; task.stage = undefined;
-        await this.store.write(data); return { status: 'started' as const, agentId: task.agentId };
-      }
-      if (task.launchState) throw new Error('上次启动结果尚未确认。请先在 Paseo 检查是否已创建会话，避免重复执行；刷新后重试可关联已创建的会话。');
-      const workspace = await paseo.workspaces.ref(task.workspaceId).refresh();
-      if (!workspace) throw new Error('工作区不可用，请先在 Paseo 恢复该工作区。');
-      const runningAgents = (await this.agents(paseo))
-        .filter(agent => agent.workspaceId === task.workspaceId && agentIsRunning(agent))
-        .map(agent => ({ id: agent.id, title: agent.title }));
-      if (runningAgents.length && confirmedWorkspaceId !== task.workspaceId) {
-        return { status: 'confirmation_required' as const, workspace: summarizeWorkspace(workspace), runningAgents };
-      }
-      const providerId = task.provider.split('/')[0];
-      const modelId = task.provider.slice(providerId.length + 1);
-      const [modeResult, modelResult] = await Promise.all([
-        paseo.providers.listModes(providerId, { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath }),
-        paseo.providers.listModels(providerId, { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath }),
-      ]);
-      if (modeResult.error) throw new Error(`无法确认运行模式：${modeResult.error}`);
-      if (modelResult.error) throw new Error(`无法确认 Thinking Mode：${modelResult.error}`);
-      const modes = modeResult.modes ?? [];
-      const modeId = task.modeId ?? defaultModeId(modes, providerId);
-      if (modeId && !modes.some(mode => mode.id === modeId)) throw new Error('任务选择的运行模式已不可用，请检查 Agent 配置后重试。');
-      const model = (modelResult.models ?? []).find(item => item.id === modelId);
-      if (!model) throw new Error('任务选择的 Agent 模型已不可用，请刷新看板后重试。');
-      const thinkingOptions = model.thinkingOptions ?? [];
-      const thinkingOptionId = task.thinkingOptionId ?? defaultThinkingOptionId(thinkingOptions, model.defaultThinkingOptionId);
-      if (thinkingOptionId && !thinkingOptions.some(option => option.id === thinkingOptionId)) throw new Error('任务选择的 Thinking Mode 已不可用，请刷新看板后重试。');
-      // Drafts created before run-mode support did not persist modeId. Resolve
-      // and store the same Full Access default before their first prompt starts.
-      if (!task.modeId && modeId) task.modeId = modeId;
-      if (!task.thinkingOptionId && thinkingOptionId) task.thinkingOptionId = thinkingOptionId;
+      const prior = this.workspaceLaunches.get(task.workspaceId) ?? Promise.resolve();
+      const next = prior.catch(() => undefined).then(() => this.launchTask(id, task.workspaceId, paseo, confirmedWorkspaceId));
+      this.workspaceLaunches.set(task.workspaceId, next);
+      try { return await next; }
+      finally { if (this.workspaceLaunches.get(task.workspaceId) === next) this.workspaceLaunches.delete(task.workspaceId); }
+    })();
+    this.launches.set(id, launch);
+    void launch.finally(() => { if (this.launches.get(id) === launch) this.launches.delete(id); }).catch(() => undefined);
+    return launch;
+  }
+  private async launchTask(id: string, queuedWorkspaceId: string, paseo: PaseoApi, confirmedWorkspaceId?: string): Promise<import('../shared/contracts').LaunchResult> {
+    const task = (await this.store.read()).tasks[id];
+    if (!task) throw new Error('任务不存在。');
+    if (task.workspaceId !== queuedWorkspaceId) throw new Error('任务工作区已变更，请刷新后重新开始执行。');
+    if (task.agentId) return { status: 'started', agentId: task.agentId };
+    if (!/^[^/]+\/.+$/.test(task.provider)) throw new Error('任务缺少具体模型，请新建任务并选择可用模型。');
+    const original = JSON.stringify(task);
+    const existing = await this.launchStep('reconcile', () => collectPages(cursor => paseo.agents.list({ filter: { labels: { 'paseo-kanban-task': id }, includeArchived: true }, page: { limit: 100, cursor } })));
+    if (existing.length) {
+      const agentId = existing[0].agent.id;
+      await this.store.update(data => {
+        const current = data.tasks[id];
+        if (!current) throw new Error('任务不存在。');
+        current.agentId = agentId; current.launchState = 'started'; current.stage = undefined;
+      });
+      return { status: 'started', agentId };
+    }
+    if (task.launchState) throw new Error('上次启动结果尚未确认。请先在 Paseo 检查是否已创建会话，避免重复执行；刷新后重试可关联已创建的会话。');
+    const workspace = await this.launchStep('workspace', () => paseo.workspaces.ref(task.workspaceId).refresh());
+    if (!workspace) throw new Error('工作区不可用，请先在 Paseo 恢复该工作区。');
+    const runningAgents = (await this.launchStep('agents', () => this.agents(paseo)))
+      .filter(agent => agent.workspaceId === task.workspaceId && agentIsRunning(agent))
+      .map(agent => ({ id: agent.id, title: agent.title }));
+    if (runningAgents.length && confirmedWorkspaceId !== task.workspaceId) {
+      return { status: 'confirmation_required', workspace: summarizeWorkspace(workspace), runningAgents };
+    }
+    const providerId = task.provider.split('/')[0];
+    const modelId = task.provider.slice(providerId.length + 1);
+    const [modeResult, modelResult] = await this.launchStep('providers', () => Promise.all([
+      paseo.providers.listModes(providerId, { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath }),
+      paseo.providers.listModels(providerId, { cwd: workspace.workspaceDirectory ?? workspace.projectRootPath }),
+    ]));
+    if (modeResult.error) throw new Error(`无法确认运行模式：${modeResult.error}`);
+    if (modelResult.error) throw new Error(`无法确认 Thinking Mode：${modelResult.error}`);
+    const modes = modeResult.modes ?? [];
+    const modeId = task.modeId ?? defaultModeId(modes, providerId);
+    if (modeId && !modes.some(mode => mode.id === modeId)) throw new Error('任务选择的运行模式已不可用，请检查 Agent 配置后重试。');
+    const model = (modelResult.models ?? []).find(item => item.id === modelId);
+    if (!model) throw new Error('任务选择的 Agent 模型已不可用，请刷新看板后重试。');
+    const thinkingOptions = model.thinkingOptions ?? [];
+    const thinkingOptionId = task.thinkingOptionId ?? defaultThinkingOptionId(thinkingOptions, model.defaultThinkingOptionId);
+    if (thinkingOptionId && !thinkingOptions.some(option => option.id === thinkingOptionId)) throw new Error('任务选择的 Thinking Mode 已不可用，请刷新看板后重试。');
+    // Recovery and reservation stay under the short filesystem lock; all remote waits are outside it.
+    const queued = performance.now();
+    const reserved = await this.store.update(async data => {
+      console.log(JSON.stringify({ plugin: 'paseo-kanban', operation: 'launch', phase: 'lockWait', elapsedMs: Math.round(performance.now() - queued) }));
+      const current = data.tasks[id];
+      if (!current || JSON.stringify(current) !== original) throw new Error('任务已在其他位置修改，请刷新后重新开始执行。');
+      await this.reconcileAttachmentStorage(data);
       const expectedDirectory = resolve(this.attachmentDirectory(id));
-      try { await Promise.all(task.attachments.map(async attachment => {
+      try { await Promise.all(current.attachments.map(async attachment => {
         const path = resolve(attachment.path);
         const sameDirectory = process.platform === 'win32' ? dirname(path).toLowerCase() === expectedDirectory.toLowerCase() : dirname(path) === expectedDirectory;
         if (!sameDirectory) throw new Error('invalid attachment path');
@@ -555,22 +611,24 @@ export class BoardService {
         await access(path, constants.R_OK);
       })); }
       catch { throw new Error('任务附件已丢失或不可读取，请删除任务后重新添加。'); }
-      task.launchState = 'starting';
-      await this.store.write(data);
-      try {
-        const agent = await paseo.workspaces.ref(task.workspaceId).agents.create({
-          config: { provider: task.provider, ...(modeId ? { modeId } : {}), ...(thinkingOptionId ? { thinkingOptionId } : {}) }, title: task.title,
-          prompt: task.description,
-          attachments: task.attachments,
-          labels: { 'paseo-kanban-task': id },
-        });
-        task.agentId = agent.id; task.launchState = 'started'; task.stage = undefined; task.updatedAt = new Date().toISOString();
-        await this.store.write(data);
-        return { status: 'started' as const, agentId: agent.id };
-      } catch (error) {
-        task.launchState = 'uncertain'; await this.store.write(data);
-        throw new Error(`启动未确认：${error instanceof Error ? error.message : String(error)}。任务已保留，请检查 Paseo 会话后重试关联。`);
-      }
+      if (!current.modeId && modeId) current.modeId = modeId;
+      if (!current.thinkingOptionId && thinkingOptionId) current.thinkingOptionId = thinkingOptionId;
+      current.launchState = 'starting';
+      return structuredClone(current);
     });
+    try {
+      const agent = await this.launchStep('createAgent', () => paseo.workspaces.ref(reserved.workspaceId).agents.create({
+        config: { provider: reserved.provider, ...(modeId ? { modeId } : {}), ...(thinkingOptionId ? { thinkingOptionId } : {}) }, title: reserved.title,
+        prompt: reserved.description, attachments: reserved.attachments, labels: { 'paseo-kanban-task': id },
+      }));
+      await this.store.update(data => {
+        const current = data.tasks[id];
+        current.agentId = agent.id; current.launchState = 'started'; current.stage = undefined; current.updatedAt = new Date().toISOString();
+      });
+      return { status: 'started', agentId: agent.id };
+    } catch (error) {
+      await this.store.update(data => { if (!data.tasks[id].agentId) data.tasks[id].launchState = 'uncertain'; });
+      throw new Error(`启动未确认：${error instanceof Error ? error.message : String(error)}。任务已保留，请检查 Paseo 会话后重试关联。`);
+    }
   }
 }

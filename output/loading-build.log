@@ -1,0 +1,77 @@
+
+> paseo-kanban@0.1.0 build:preview
+> vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+node_modules/@tanstack/react-query/build/modern/QueryClientProvider.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/QueryClientProvider.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/QueryErrorResetBoundary.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/QueryErrorResetBoundary.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useQueries.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useQueries.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useQuery.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useQuery.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/IsRestoringProvider.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/IsRestoringProvider.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/HydrationBoundary.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/HydrationBoundary.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useMutationState.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useMutationState.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useIsFetching.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useIsFetching.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useMutation.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useMutation.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useInfiniteQuery.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useInfiniteQuery.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useSuspenseQuery.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useSuspenseQuery.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useSuspenseInfiniteQuery.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useSuspenseInfiniteQuery.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useSuspenseQueries.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useSuspenseQueries.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/errorBoundaryUtils.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/errorBoundaryUtils.js" was ignored.
+node_modules/@tanstack/react-query/build/modern/useBaseQuery.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/@tanstack/react-query/build/modern/useBaseQuery.js" was ignored.
+node_modules/react-native-web/dist/exports/createElement/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/createElement/index.js" was ignored.
+node_modules/react-native-web/dist/exports/AccessibilityInfo/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/AccessibilityInfo/index.js" was ignored.
+node_modules/react-native-web/dist/exports/render/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/render/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Animated/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Animated/index.js" was ignored.
+node_modules/react-native-web/dist/exports/AppState/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/AppState/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Appearance/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Appearance/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Clipboard/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Clipboard/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Dimensions/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Dimensions/index.js" was ignored.
+node_modules/react-native-web/dist/exports/ActivityIndicator/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/ActivityIndicator/index.js" was ignored.
+node_modules/react-native-web/dist/exports/FlatList/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/FlatList/index.js" was ignored.
+node_modules/react-native-web/dist/exports/CheckBox/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/CheckBox/index.js" was ignored.
+node_modules/react-native-web/dist/exports/KeyboardAvoidingView/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/KeyboardAvoidingView/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Picker/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Picker/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Pressable/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Pressable/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Modal/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Modal/index.js" was ignored.
+node_modules/react-native-web/dist/exports/ProgressBar/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/ProgressBar/index.js" was ignored.
+node_modules/react-native-web/dist/exports/SectionList/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/SectionList/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Switch/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Switch/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Text/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Text/index.js" was ignored.
+node_modules/react-native-web/dist/exports/TouchableHighlight/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/TouchableHighlight/index.js" was ignored.
+node_modules/react-native-web/dist/exports/TouchableWithoutFeedback/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/TouchableWithoutFeedback/index.js" was ignored.
+node_modules/react-native-web/dist/exports/TextInput/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/TextInput/index.js" was ignored.
+node_modules/react-native-web/dist/exports/TouchableOpacity/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/TouchableOpacity/index.js" was ignored.
+node_modules/react-native-web/dist/exports/VirtualizedList/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/VirtualizedList/index.js" was ignored.
+node_modules/react-native-web/dist/exports/useColorScheme/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/useColorScheme/index.js" was ignored.
+node_modules/react-native-web/dist/exports/useWindowDimensions/index.js (11:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/useWindowDimensions/index.js" was ignored.
+node_modules/react-native-web/dist/exports/useLocaleContext/index.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/useLocaleContext/index.js" was ignored.
+node_modules/react-native-web/dist/exports/AppRegistry/index.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/AppRegistry/index.js" was ignored.
+node_modules/react-native-web/dist/exports/View/index.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/View/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Image/index.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Image/index.js" was ignored.
+node_modules/react-native-web/dist/exports/ScrollView/index.js (1:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/ScrollView/index.js" was ignored.
+node_modules/react-native-web/dist/exports/Text/TextAncestorContext.js (10:0): Module level directives cause errors when bundled, "use client" in "node_modules/react-native-web/dist/exports/Text/TextAncestorContext.js" was ignored.
+node_modules/zod/v4/core/util.js (400:0): A comment
+
+"// Wrapped in a `@__PURE__` IIFE: esbuild never tree-shakes a top-level initializer that contains a member access on `Number`, so the bare object literal survived into every bundle."
+
+in "node_modules/zod/v4/core/util.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+node_modules/zod/v4/core/regexes.js (74:0): A comment
+
+"/** Anchors a pattern source. The interpolation lives here rather than at the call site because
+ * esbuild will not drop a `@__PURE__` call whose own argument interpolates a variable, but it
+ * will drop `anchor(dateSource)`. Keeping it inline pinned `date` into every bundle. */"
+
+in "node_modules/zod/v4/core/regexes.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+✓ 468 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/preview/index.html                   0.38 kB │ gzip:   0.30 kB
+dist/preview/assets/index-Cfml8to2.css    0.65 kB │ gzip:   0.42 kB
+dist/preview/assets/index-D2HXb9km.js   559.89 kB │ gzip: 171.11 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 1.53s

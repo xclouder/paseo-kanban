@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
 import type { PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { useRpc } from '@getpaseo/plugin/client';
 import { SettingsAction, SettingsInput, SettingsSection } from '@getpaseo/plugin/client/ui';
-import { readBoard, readKanbanSettings, saveKanbanSettings } from '../shared/contracts';
+import { readBoard, readProviderOptions, readKanbanSettings, saveKanbanSettings } from '../shared/contracts';
 import type { Snapshot } from '../shared/model';
 import { ModelPresets } from './model-presets';
 import { TaskTemplateSettings } from './task-template-settings';
@@ -14,7 +14,12 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : S
 
 export function KanbanSettings({ theme }: PluginSurfaceProps) {
   const read = useRpc(readKanbanSettings);
-  const readSnapshot = useRpc(readBoard);
+  const readCore = useRpc(readBoard);
+  const readProviders = useRpc(readProviderOptions);
+  const readSnapshot = useCallback(async (_: object) => {
+    const [core, providers] = await Promise.all([readCore({}), readProviders({})]);
+    return { ...core, ...providers };
+  }, [readCore, readProviders]);
   const save = useRpc(saveKanbanSettings);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [savedValue, setSavedValue] = useState<string>();

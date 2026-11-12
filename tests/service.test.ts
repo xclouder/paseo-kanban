@@ -178,7 +178,7 @@ test('a failed operation releases the writer lock', async t => {
   assert((await store.read()).sessions.ok);
 });
 test('read imports sessions and exposes concrete provider model options', async t => {
-  const { service } = await setup(t); const { api } = mockApi(); const snapshot = await service.read(api);
+  const { service } = await setup(t); const { api } = mockApi(); const snapshot = { ...await service.read(api), ...await service.readProviders(api) };
   assert.equal(snapshot.agents.length, 8); assert.equal(snapshot.models[0].id, 'codex/model');
   assert.equal(snapshot.models[0].thinkingOptions.find(option => option.id === 'high')?.label, 'High');
   assert(snapshot.modes.some(mode => mode.provider === 'codex' && mode.id === 'full-access'));
@@ -198,19 +198,19 @@ test('provider snapshot timeout does not block reads and retries after a cooldow
     return snapshot();
   };
   const started = Date.now();
-  const [first, concurrent] = await Promise.all([service.read(mock.api), service.read(mock.api)]);
-  const second = await service.read(mock.api);
+  const [first, concurrent] = await Promise.all([service.readProviders(mock.api), service.readProviders(mock.api)]);
+  const second = await service.readProviders(mock.api);
   assert(Date.now() - started < 500);
-  assert.equal(first.agents.length, 8);
-  assert.equal(first.workspaces.length, 3);
-  assert.equal(Object.keys(first.store.tasks).length, 1);
+  assert.equal((await service.read(mock.api)).agents.length, 8);
+
+
   assert.match(first.providerError ?? '', /超时/);
   assert.match(concurrent.providerError ?? '', /超时/);
-  assert.equal(second.agents.length, 8);
+
   assert.equal(calls, 1);
   recovered = true;
   (service as unknown as { providerRetryAfter: number }).providerRetryAfter = 0;
-  const restored = await service.read(mock.api);
+  const restored = await service.readProviders(mock.api);
   assert.equal(calls, 2);
   assert.equal(restored.models[0].id, 'codex/model');
   assert.equal(restored.providerError, undefined);
@@ -225,8 +225,8 @@ test('partial provider snapshots keep ready models during the retry cooldown', a
     calls++;
     return { ...ready, entries: [...ready.entries, { provider: 'claude', status: 'loading', enabled: true }] };
   };
-  const first = await service.read(mock.api);
-  const second = await service.read(mock.api);
+  const first = await service.readProviders(mock.api);
+  const second = await service.readProviders(mock.api);
   assert.equal(first.models[0].id, 'codex/model');
   assert.match(first.providerError ?? '', /加载或暂不可用/);
   assert.equal(second.models[0].id, 'codex/model');
@@ -426,18 +426,18 @@ test('board reads recover interrupted attachment deletes and remove orphan tombs
   const directory = dirname(draft.attachments[0].path);
   const activeTombstone = `${directory}.deleting-cccccccc-cccc-4ccc-8ccc-cccccccccccc`;
   await rename(directory, activeTombstone);
-  await service.read(mock.api);
+  await service.maintainAttachments(true);
   assert.equal(await readFile(draft.attachments[0].path, 'utf8'), 'recover me');
   const deletedTombstone = `${directory}.deleting-dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
   await rename(directory, deletedTombstone);
   await store.update(data => { delete data.tasks[draft.id]; });
-  await service.read(mock.api);
+  await service.maintainAttachments(true);
   await waitForMissing(deletedTombstone);
 
   const canonicalOrphan = join(dirname(store.file), 'attachments', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');
   await mkdir(canonicalOrphan, { recursive: true });
   await writeFile(join(canonicalOrphan, 'orphan.txt'), 'orphan');
-  await service.read(mock.api);
+  await service.maintainAttachments(true);
   await assert.rejects(() => access(canonicalOrphan));
 });
 test('launch rejects attachment paths outside the task-owned directory', async t => {
@@ -579,4 +579,109 @@ test('failed sessions complete directly and watch later persists independently',
   assert.equal((await store.read()).sessions[agent.id].stage, 'done');
   agent.pendingPermissions = [{ id: 'permission' }];
   await assert.rejects(service.move({ id, stage: 'done' }, mock.api), /授权/);
+});
+
+function gate() {
+  let release!: () => void;
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  return { promise, release };
+}
+async function promptly<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('operation blocked')), 1000); })]); }
+  finally { clearTimeout(timer); }
+}
+
+test('board read bypasses a busy writer and never waits for provider discovery or attachment maintenance', async t => {
+  const { service, store } = await setup(t); const mock = mockApi();
+  await service.create(input, mock.api);
+  const held = gate(), entered = gate();
+  const writer = store.exclusive(async () => { entered.release(); await held.promise; });
+  await entered.promise;
+  let providerCalls = 0;
+  mock.api.providers.snapshot = async () => { providerCalls++; return new Promise<never>(() => {}); };
+  try {
+    const snapshot = await promptly(service.read(mock.api));
+    assert.equal(snapshot.agents.length, 8);
+    assert.equal(Object.keys(snapshot.store.tasks).length, 1);
+    assert.equal(providerCalls, 0);
+  } finally { held.release(); await writer; await service.maintainAttachments(); }
+});
+
+test('slow agent creation leaves board reads and writes available and merges metadata on completion', async t => {
+  const { service, store } = await setup(t); const mock = mockApi();
+  const task = await service.create({ ...input, workspaceId: 'workspace-design' }, mock.api);
+  const ref = mock.api.workspaces.ref.bind(mock.api.workspaces);
+  const held = gate(), entered = gate();
+  mock.api.workspaces.ref = ((id: string) => {
+    const workspace = ref(id);
+    return { ...workspace, agents: { create: async (options: Parameters<typeof workspace.agents.create>[0]) => {
+      entered.release(); await held.promise; return workspace.agents.create(options);
+    } } };
+  }) as typeof mock.api.workspaces.ref;
+  const launched = service.launch(task.id, mock.api);
+  const duplicate = service.launch(task.id, mock.api);
+  await promptly(entered.promise);
+  try {
+    assert.equal((await promptly(service.read(mock.api))).store.tasks[task.id].launchState, 'starting');
+    await promptly(service.patch({ id: task.id, patch: { pinned: true, watchLater: true } }, mock.api));
+    await promptly(service.addInbox({ clientRequestId: '10101010-1010-4010-8010-101010101010', title: 'available during launch' }));
+    await assert.rejects(service.delete(task.id), /从未执行过/);
+  } finally { held.release(); await Promise.all([launched, duplicate]); await service.maintainAttachments(); }
+  assert.equal(mock.creates, 1);
+  const saved = (await store.read()).tasks[task.id];
+  assert.equal(saved.pinned, true); assert.equal(saved.watchLater, true); assert.equal(saved.launchState, 'started');
+});
+
+test('draft changes during remote launch validation cannot start stale task contents', async t => {
+  const { service } = await setup(t); const mock = mockApi();
+  const task = await service.create({ ...input, workspaceId: 'workspace-design' }, mock.api);
+  const listModes = mock.api.providers.listModes.bind(mock.api.providers);
+  const held = gate(), entered = gate();
+  mock.api.providers.listModes = (async (...args: Parameters<typeof listModes>) => { entered.release(); await held.promise; return listModes(...args); }) as typeof listModes;
+  const launching = service.launch(task.id, mock.api);
+  const rejected = assert.rejects(launching, /修改/);
+  await promptly(entered.promise);
+  await promptly(service.patch({ id: task.id, patch: { description: 'new content' } }, mock.api));
+  held.release(); await rejected;
+  assert.equal(mock.creates, 0);
+});
+
+test('concurrent launches in one workspace still require confirmation for the second task', async t => {
+  const { service } = await setup(t); const mock = mockApi();
+  const first = await service.create({ ...input, workspaceId: 'workspace-design' }, mock.api);
+  const second = await service.create({ ...input, clientRequestId: '20202020-2020-4020-8020-202020202020', workspaceId: 'workspace-design' }, mock.api);
+  const results = await Promise.all([service.launch(first.id, mock.api), service.launch(second.id, mock.api)]);
+  assert.deepEqual(results.map(result => result.status).sort(), ['confirmation_required', 'started']);
+  assert.equal(mock.creates, 1);
+});
+
+test('a timed out launch validation releases the workspace queue without reserving the task', async t => {
+  const { store } = await setup(t); const service = new BoardService(store, 25, 1000, 20); const mock = mockApi();
+  const first = await service.create({ ...input, workspaceId: 'workspace-design' }, mock.api);
+  const second = await service.create({ ...input, clientRequestId: '30303030-3030-4030-8030-303030303030', workspaceId: 'workspace-design' }, mock.api);
+  const listModes = mock.api.providers.listModes.bind(mock.api.providers);
+  let calls = 0;
+  mock.api.providers.listModes = (async (...args: Parameters<typeof listModes>) => { if (++calls === 1) return new Promise<never>(() => {}); return listModes(...args); }) as typeof listModes;
+  await assert.rejects(service.launch(first.id, mock.api), /超时/);
+  assert.equal((await store.read()).tasks[first.id].launchState, undefined);
+  assert.equal((await promptly(service.launch(second.id, mock.api))).status, 'started');
+});
+
+test('a timed out create stays uncertain and a late success is linked without duplicate execution', async t => {
+  const { store } = await setup(t); const service = new BoardService(store, 25, 1000, 20); const mock = mockApi();
+  const task = await service.create({ ...input, workspaceId: 'workspace-design' }, mock.api);
+  const held = gate(), completed = gate(); const ref = mock.api.workspaces.ref.bind(mock.api.workspaces);
+  mock.api.workspaces.ref = ((id: string) => {
+    const workspace = ref(id);
+    return { ...workspace, agents: { create: async (options: Parameters<typeof workspace.agents.create>[0]) => {
+      await held.promise;
+      const agent = await workspace.agents.create(options); completed.release(); return agent;
+    } } };
+  }) as typeof mock.api.workspaces.ref;
+  await assert.rejects(service.launch(task.id, mock.api), /启动未确认.*超时/);
+  assert.equal((await store.read()).tasks[task.id].launchState, 'uncertain');
+  held.release(); await completed.promise;
+  const restored = await service.launch(task.id, mock.api);
+  assert.equal(restored.status, 'started'); assert.equal(mock.creates, 1);
 });
