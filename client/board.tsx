@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import type { PluginTheme } from '@getpaseo/plugin';
 import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/plugin/client';
 import { useRpc } from '@getpaseo/plugin/client';
@@ -15,6 +15,7 @@ import { BOARD_KEYBOARD_SCOPE_TEST_ID_PREFIX, isActiveBoardKeyboardScope, isOpen
 import { WebDragItem, WebDropZone } from './web';
 import { readCachedBoard, saveCachedBoard, readWithTimeout } from './board-cache';
 import { openKanbanSettings } from './open-settings';
+import { InboxDialog } from './inbox-dialog';
 
 export interface BoardApi {
   organize(action: ProjectAction): Promise<unknown>;
@@ -50,7 +51,7 @@ function ConnectedBoard(props: PluginSurfaceProps & { workspaceId?: string }) {
 type Colors = PluginTheme['colors'];
 type Notice = { text: string; error: boolean; retry?: boolean };
 const SIDEBAR_MIN_WIDTH = 176;
-const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_MAX_WIDTH = 720;
 const SIDEBAR_DEFAULT_WIDTH = 210;
 const row = { flexDirection: 'row', alignItems: 'center' } as const;
 const wrap = { ...row, flexWrap: 'wrap', gap: 8 } as const;
@@ -266,6 +267,10 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const createCloseBlockedRef = useRef(createCloseBlocked);
   createCloseBlockedRef.current = createCloseBlocked;
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const { width: windowWidth } = useWindowDimensions();
+  const sidebarMax = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.floor(windowWidth * 0.45)));
+  const visibleSidebarWidth = Math.min(sidebarWidth, sidebarMax);
+  const sidebarDrag = useRef<{ id: number; x: number; width: number } | null>(null);
   const [defaultModel, setDefaultModel] = useState('');
   const [dragging, setDragging] = useState<string | null>(null);
   const [message, setMessage] = useState<Notice | null>(null);
@@ -333,7 +338,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     const onKey = (event: KeyboardEvent) => {
       if (!isActiveBoardKeyboardScope(keyboardScopeTestId)) return;
       if (taskMenu) return;
-      if (document.querySelector(`[data-testid="${QUICK_INBOX_MODAL_TEST_ID}"]`)) return;
+      if (document.querySelector(`[data-testid="${QUICK_INBOX_MODAL_TEST_ID}"], [data-kanban-inbox-editor][open]`)) return;
       if (event.type === 'keydown' && (laterView || inboxView || pinned) && isOpenBoardShortcut(event)) {
         event.preventDefault(); event.stopImmediatePropagation(); reset();
         return;
@@ -452,17 +457,10 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     setDefaultModel(model);
     if (layout.platform === 'web' && typeof window !== 'undefined') window.localStorage.setItem(`paseo-kanban:default-model:${host.id}`, model);
   };
-  const resizeSidebar = (event: React.PointerEvent) => {
-    if (layout.platform !== 'web' || typeof window === 'undefined') return;
-    event.preventDefault();
-    const startX = event.clientX, startWidth = sidebarWidth;
-    const move = (next: PointerEvent) => setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth + next.clientX - startX)));
-    const up = (next: PointerEvent) => {
-      const width = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth + next.clientX - startX));
-      setSidebarWidth(width); window.localStorage.setItem(`paseo-kanban:sidebar-width:${host.id}`, String(width));
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  const resizeSidebar = (nextWidth: number) => {
+    const width = Math.min(sidebarMax, Math.max(SIDEBAR_MIN_WIDTH, Math.round(nextWidth)));
+    setSidebarWidth(width);
+    boardStorage(true)?.setItem(`paseo-kanban:sidebar-width:${host.id}`, String(width));
   };
   const all = useMemo(() => board.data ? buildCards(board.data) : [], [board.data]);
   const scope = all.filter(card => !workspaceId || card.workspaceId === workspaceId);
@@ -475,6 +473,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.title.localeCompare(b.title));
   const active = all.find(card => card.id === selected);
   const projects = [...new Map((board.data?.workspaces ?? []).filter(w => !workspaceId || w.id === workspaceId).map(w => [w.projectId, { id: w.projectId, name: w.project }])).values()];
+  const projectSidebar = board.data && <ProjectSidebar c={c} projects={projects} layout={board.data.store.projectLayout} selected={project} busy={busy} web={layout.platform === 'web'} select={id => { reset(); setProject(id); }} count={id => count(id)} organize={action => run(() => api.organize(action))} />;
   const count = (id?: string) => scope.filter(card => !card.hidden && (!id || card.projectId === id)).length;
   const move = (id: string, stage: Stage, beforeId?: string) => { setDragging(null); return run(() => api.move({ id, stage, beforeId }), `已移至${stageNames[stage]}`); };
   const completeReview = (ids: string[]) => { void run(() => api.completeReview({ ids }), `已将 ${ids.length} 个待审核任务标记为完成`); };
@@ -516,7 +515,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   return <View testID={keyboardScopeTestId} style={{ flex: 1, backgroundColor: c.surface0, minHeight: 0 }}>
     {preview && <View style={{ ...row, backgroundColor: c.surface2, justifyContent: 'center', padding: 8, gap: 8 }}><Icon name="FlaskConical" size={13} color={c.statusWarning} /><Text style={{ color: c.foregroundMuted, fontSize: 11 }}>交互预览 · 使用示例数据，不会操作真实 Paseo 会话</Text></View>}
     <View style={{ flex: 1, flexDirection: 'row', minHeight: 0 }}>
-      {!layout.compact && !workspaceId && <View testID="board-sidebar" style={{ width: sidebarWidth, position: 'relative', borderRightWidth: 1, borderRightColor: c.border, padding: 16, paddingTop: 24 }}>
+      {!layout.compact && !workspaceId && <View testID="board-sidebar" style={{ width: visibleSidebarWidth, flexShrink: 0, position: 'relative', borderRightWidth: 1, borderRightColor: c.border, padding: 16, paddingTop: 24 }}>
         <View style={{ ...row, gap: 10, paddingHorizontal: 8, marginBottom: 30 }}><Icon name="PanelsTopLeft" size={23} color={c.accent} /><Text style={{ color: c.foreground, fontSize: 18, fontWeight: '700', letterSpacing: -0.6 }}>paseo<Text style={{ color: c.foregroundMuted, fontWeight: '400' }}> / board</Text></Text></View>
         <Label c={c}>工作台</Label>
         {sidebarItem('稍后再看', 'Clock', laterView, () => { reset(); setLaterView(true); }, scope.filter(card => card.watchLater).length)}
@@ -525,16 +524,38 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
         {sidebarItem('需要我处理', 'Inbox', attention, () => { reset(); setAttention(true); }, scope.filter(x => !x.hidden && ['blocked', 'review'].includes(x.stage)).length)}
         {sidebarItem('常用会话', 'Star', pinned, () => { reset(); setPinned(true); }, scope.filter(x => x.pinned).length)}
         <View style={{ height: 28 }} />
-        <ScrollView style={{ flex: 1 }}>
-          {board.data && <ProjectSidebar c={c} projects={projects} layout={board.data.store.projectLayout} selected={project} busy={busy} web={layout.platform === 'web'} select={id => { reset(); setProject(id); }} count={id => count(id)} organize={action => run(() => api.organize(action))} />}
-        </ScrollView>
+        {layout.platform === 'web' ? createElement('div', {
+          role: 'region', 'aria-label': '项目列表', tabIndex: 0,
+          style: { flex: '1 1 auto', minHeight: 0, overflow: 'auto' },
+        }, createElement('div', { style: { width: 'max-content', minWidth: '100%' } }, projectSidebar)) : <ScrollView style={{ flex: 1 }}>{projectSidebar}</ScrollView>}
         {sidebarItem('已收起', 'Archive', hidden, () => { reset(); setHidden(true); }, scope.filter(x => x.hidden).length)}
         <View style={{ marginTop: 18, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 18, ...row, gap: 8 }}>
           <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: board.isError ? c.statusDanger : c.statusSuccess }} />
           <Text numberOfLines={1} style={{ flex: 1, color: c.foregroundMuted, fontSize: 11 }}>{host.label}</Text>
           <Text style={{ color: c.foregroundMuted, fontSize: 10 }}>本机存储</Text>
         </View>
-        {layout.platform === 'web' && createElement('div', { 'data-testid': 'sidebar-resizer', role: 'separator', 'aria-label': '调整左侧栏宽度', 'aria-orientation': 'vertical', onPointerDown: resizeSidebar, style: { position: 'absolute', top: 0, right: -4, bottom: 0, width: 8, cursor: 'col-resize', touchAction: 'none', zIndex: 2 } })}
+        {layout.platform === 'web' && createElement('div', {
+          'data-testid': 'sidebar-resizer', role: 'separator', 'aria-label': '调整左侧栏宽度', 'aria-orientation': 'vertical', tabIndex: 0,
+          'aria-valuemin': SIDEBAR_MIN_WIDTH, 'aria-valuemax': sidebarMax, 'aria-valuenow': visibleSidebarWidth,
+          style: { position: 'absolute', top: 0, right: -4, bottom: 0, width: 8, cursor: 'col-resize', touchAction: 'none', zIndex: 2 },
+          onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
+            if (event.button !== 0 || sidebarDrag.current) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            sidebarDrag.current = { id: event.pointerId, x: event.clientX, width: visibleSidebarWidth };
+          },
+          onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
+            const start = sidebarDrag.current;
+            if (start?.id === event.pointerId) resizeSidebar(start.width + event.clientX - start.x);
+          },
+          onLostPointerCapture: () => { sidebarDrag.current = null; },
+          onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+            const widths = { ArrowLeft: visibleSidebarWidth - 24, ArrowRight: visibleSidebarWidth + 24, Home: SIDEBAR_MIN_WIDTH, End: sidebarMax };
+            const next = widths[event.key as keyof typeof widths];
+            if (next === undefined) return;
+            event.preventDefault();
+            resizeSidebar(next);
+          },
+        })}
       </View>}
       <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
         <View style={{ paddingHorizontal: layout.compact ? 18 : 28, paddingTop: layout.compact ? 18 : 25, paddingBottom: layout.compact ? 14 : 19, borderBottomWidth: 1, borderBottomColor: c.border, gap: layout.compact ? 14 : 18 }}>
@@ -578,7 +599,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
           <Text style={{ flex: 1, color: notice.error ? c.statusDanger : c.foreground, fontSize: 12 }}>{notice.text}</Text>
           <Button c={c} small onPress={() => notice.retry ? void board.refetch() : setMessage(null)}>{notice.retry ? '重试' : '关闭'}</Button>
         </View>}
-        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在加载看板…</Text>{slowLoading && <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>正在等待 Paseo 返回会话或工作区，连接较慢…</Text>}</View> : laterView ? <LaterPanel c={c} cards={laterCards} busy={busy} select={setSelected} remove={card => void toggleLater(card)} /> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} compact={layout.compact} busy={busy} add={layout.compact ? input => run(() => api.addInbox(input), '已存入 Inbox') : undefined} createTask={entry => openCreate(entry)} edit={input => run(() => api.patchInbox(input), 'Inbox 条目已更新')} remove={removeInboxOptimistically} /> : pinned ? <FavoritePanel c={c} cards={favoriteCards} total={scope.filter(card => card.pinned).length} query={query} compact={layout.compact} busy={busy} navigation={navigation} clearSearch={() => setQuery('')} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: false } }), '已取消收藏')} /> : layout.compact ? <MobileTaskPicker c={c} cards={visible} busy={busy} openCreate={() => openCreate()} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} launch={openAndLaunch} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: !card.pinned } }), card.pinned ? '已取消收藏' : '已收藏为常用会话')} /> : <View style={{ flex: 1, minHeight: 0 }}>
+        {board.isPending ? <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}><ActivityIndicator color={c.accent} /><Text style={{ color: c.foregroundMuted }}>正在加载看板…</Text>{slowLoading && <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>正在等待 Paseo 返回会话或工作区，连接较慢…</Text>}</View> : laterView ? <LaterPanel c={c} cards={laterCards} busy={busy} select={setSelected} remove={card => void toggleLater(card)} /> : inboxView ? <InboxPanel c={c} entries={Object.values(board.data?.store.inbox ?? {})} compact={layout.compact} web={layout.platform === 'web'} busy={busy} add={layout.compact ? input => run(() => api.addInbox(input), '已存入 Inbox') : undefined} createTask={entry => openCreate(entry)} edit={input => run(() => api.patchInbox(input), 'Inbox 条目已更新')} remove={removeInboxOptimistically} /> : pinned ? <FavoritePanel c={c} cards={favoriteCards} total={scope.filter(card => card.pinned).length} query={query} compact={layout.compact} busy={busy} navigation={navigation} clearSearch={() => setQuery('')} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: false } }), '已取消收藏')} /> : layout.compact ? <MobileTaskPicker c={c} cards={visible} busy={busy} openCreate={() => openCreate()} select={id => { setAutoLaunchTaskId(null); setSelected(id); }} launch={openAndLaunch} favorite={card => void run(() => api.patch({ id: card.id, patch: { pinned: !card.pinned } }), card.pinned ? '已取消收藏' : '已收藏为常用会话')} /> : <View style={{ flex: 1, minHeight: 0 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {visible.length === 0 && <View style={{ padding: 16, ...row, gap: 12 }}><Icon name="Search" size={17} color={c.foregroundMuted} /><Text style={{ color: c.foregroundMuted, fontSize: 12, flex: 1 }}>{all.length ? '没有符合条件的任务。试试清除筛选，或查看已收起任务。' : '还没有会话。新建一个任务，或在 Paseo 中打开会话后刷新。'}</Text>{all.length > 0 && <Button c={c} small onPress={reset}>清除筛选</Button>}</View>}
             <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: layout.compact ? 12 : 24, gap: 15, flexGrow: 1 }} showsHorizontalScrollIndicator>
@@ -706,27 +727,70 @@ function MobileTaskPicker({ c, cards, busy, openCreate, select, launch, favorite
   </ScrollView>;
 }
 
-function InboxPanel({ c, entries, compact, busy, add, createTask, edit, remove }: { c: Colors; entries: InboxEntry[]; compact: boolean; busy: boolean; add?(input: AddInboxInput): Promise<boolean>; createTask(entry: InboxEntry): void; edit(input: PatchInboxInput): Promise<boolean>; remove(id: string): Promise<boolean> }) {
+function InboxPanel({ c, entries, compact, web, busy, add, createTask, edit, remove }: { c: Colors; entries: InboxEntry[]; compact: boolean; web: boolean; busy: boolean; add?(input: AddInboxInput): Promise<boolean>; createTask(entry: InboxEntry): void; edit(input: PatchInboxInput): Promise<boolean>; remove(id: string): Promise<boolean> }) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<InboxEntry | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const [editOriginalTitle, setEditOriginalTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  const [editOriginalDescription, setEditOriginalDescription] = useState('');
+  const [attachmentAdditions, setAttachmentAdditions] = useState<CreateAttachmentInput[]>([]);
+  const [attachmentRemovals, setAttachmentRemovals] = useState<string[]>([]);
+  const [reading, setReading] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [discarding, setDiscarding] = useState(false);
+  const dialog = web && !compact;
   const [captureTitle, setCaptureTitle] = useState('');
   const [captureDescription, setCaptureDescription] = useState('');
   const [captureRequestId, setCaptureRequestId] = useState(clientUuid);
   const [capturing, setCapturing] = useState(false);
   const sorted = [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
-  const beginEdit = (entry: InboxEntry) => { setConfirmDelete(null); setEditing(entry.id); setEditTitle(entry.title); setEditOriginalTitle(entry.title); setEditDescription(entry.description); setEditOriginalDescription(entry.description); };
-  const cancelEdit = () => { setEditing(null); setEditTitle(''); setEditOriginalTitle(''); setEditDescription(''); setEditOriginalDescription(''); };
-  const saveEdit = (entry: InboxEntry) => {
-    const title = editTitle.trim();
-    const description = editDescription.trim();
-    const unchanged = title === editOriginalTitle && description === editOriginalDescription;
-    if (!title || title.length > MAX_TITLE_LENGTH || description.length > MAX_DESCRIPTION_LENGTH || unchanged) { if (unchanged) cancelEdit(); return; }
-    void edit({ id: entry.id, expectedTitle: editOriginalTitle, expectedDescription: editOriginalDescription, title, description }).then(ok => { if (ok) cancelEdit(); });
+  const retained = editing?.attachments.filter(item => !attachmentRemovals.includes(item.id)) ?? [];
+  const dirty = editing && (editTitle.trim() !== editing.title || editDescription.trim() !== editing.description
+    || attachmentAdditions.length > 0 || attachmentRemovals.length > 0);
+  const beginEdit = (entry: InboxEntry) => {
+    setConfirmDelete(null);
+    setEditing(entry);
+    setEditTitle(entry.title);
+    setEditDescription(entry.description);
+    setAttachmentAdditions([]);
+    setAttachmentRemovals([]);
+    setDiscarding(false);
+    setEditError('');
   };
+  const cancelEdit = () => setEditing(null);
+  const requestClose = () => {
+    if (busy || reading) return;
+    if (dirty && dialog) setDiscarding(true);
+    else cancelEdit();
+  };
+  const canSave = dirty && !busy && !reading && editTitle.trim() && editTitle.trim().length <= MAX_TITLE_LENGTH
+    && editDescription.trim().length <= MAX_DESCRIPTION_LENGTH;
+  const saveEdit = async () => {
+    if (!editing || !canSave) return;
+    setEditError('');
+    const ok = await edit({
+      id: editing.id, expectedTitle: editing.title, expectedDescription: editing.description,
+      expectedRevision: editing.revision ?? 0, title: editTitle.trim(), description: editDescription.trim(),
+      attachmentAdditions, attachmentRemovals,
+    });
+    if (ok) cancelEdit();
+    else setEditError('保存失败，请根据看板提示重试。');
+  };
+  const editorFields = editing && <View style={{ gap: 8, flexGrow: 1 }}>
+    <InboxEntryEditor c={c} label={`编辑 Inbox 条目 ${editing.title}`} value={editTitle} maxLength={MAX_TITLE_LENGTH} disabled={busy} onChange={setEditTitle} />
+    <InboxEntryEditor c={c} label={`编辑 Inbox 详细描述 ${editing.title}`} value={editDescription} maxLength={MAX_DESCRIPTION_LENGTH} multiline expand={dialog} disabled={busy} onChange={setEditDescription} />
+    {retained.map(attachment => <View key={attachment.id} style={{ ...row, gap: 8 }}>
+      <Text style={{ flex: 1, color: c.foreground, fontSize: 12 }}>{attachment.fileName}</Text>
+      <Button c={c} small icon="X" label={`移除附件 ${attachment.fileName}`} disabled={busy || reading} onPress={() => setAttachmentRemovals(ids => [...ids, attachment.id])} />
+    </View>)}
+    {web && !compact && <AttachmentPicker c={c} attachments={attachmentAdditions} disabled={busy}
+      existingCount={retained.length} existingSize={retained.reduce((size, attachment) => size + attachment.size, 0)}
+      onChange={setAttachmentAdditions} onError={setEditError} onReadingChange={setReading} />}
+    {editError ? <Text accessibilityRole="alert" style={{ color: c.statusDanger, fontSize: 11 }}>{editError}</Text> : null}
+  </View>;
+  const editorActions = <>
+    <Button c={c} large={compact} small={!compact} primary icon="Check" disabled={!canSave} onPress={() => void saveEdit()}>保存</Button>
+    <Button c={c} large={compact} small={!compact} disabled={busy || reading} onPress={requestClose}>取消</Button>
+  </>;
   const capture = async () => {
     const title = captureTitle.trim();
     const description = captureDescription.trim();
@@ -736,7 +800,7 @@ function InboxPanel({ c, entries, compact, busy, add, createTask, edit, remove }
     if (ok) { setCaptureTitle(''); setCaptureDescription(''); setCaptureRequestId(clientUuid()); }
     setCapturing(false);
   };
-  return <ScrollView testID="inbox-panel" style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: 820, alignSelf: 'center', padding: compact ? 16 : 24, paddingBottom: compact ? 28 : 24, gap: compact ? 12 : 10 }}>
+  return <><ScrollView testID="inbox-panel" style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: 820, alignSelf: 'center', padding: compact ? 16 : 24, paddingBottom: compact ? 28 : 24, gap: compact ? 12 : 10 }}>
     {compact && add && <View style={{ padding: 16, borderRadius: 14, backgroundColor: c.surface2 }}>
       <View style={{ ...row, gap: 9, marginBottom: 12 }}><Icon name="Sparkles" size={18} color={c.accent} /><Text style={{ color: c.foreground, fontSize: 16, fontWeight: '700' }}>快速记一笔</Text></View>
       <TextInput accessibilityLabel="Inbox 输入" autoFocus multiline maxLength={MAX_TITLE_LENGTH} editable={!busy && !capturing} value={captureTitle} onChangeText={setCaptureTitle} placeholder="想法标题" placeholderTextColor={c.foregroundMuted} style={{ minHeight: 72, color: c.foreground, backgroundColor: c.surface1, borderWidth: 1, borderColor: captureTitle ? c.accent : c.border, borderRadius: 11, padding: 13, fontSize: 16, lineHeight: 23, textAlignVertical: 'top' }} />
@@ -748,18 +812,29 @@ function InboxPanel({ c, entries, compact, busy, add, createTask, edit, remove }
       <Text style={{ color: c.foreground, fontSize: 14, fontWeight: '600' }}>Inbox 还是空的</Text>
       <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{compact ? '想到事情时，直接在上方记下一项。' : '在 Paseo 任意位置按 Ctrl+Shift+I 快速记下一项。'}</Text>
     </View> : sorted.map(entry => <View key={entry.id} testID={`inbox-entry-${entry.id}`} style={{ flexDirection: compact ? 'column' : 'row', alignItems: compact ? 'stretch' : 'center', gap: compact ? 10 : 14, padding: 15, borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.surface1 }}>
-      <View style={{ ...row, flex: 1, minWidth: 0, gap: 14 }}>{(!compact || editing !== entry.id) && <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>}
-      <View style={{ flex: 1, minWidth: 0 }}>{editing === entry.id ? <View style={{ gap: 8 }}><InboxEntryEditor c={c} label={`编辑 Inbox 条目 ${editOriginalTitle}`} value={editTitle} maxLength={MAX_TITLE_LENGTH} disabled={busy} onChange={setEditTitle} /><InboxEntryEditor c={c} label={`编辑 Inbox 详细描述 ${editOriginalTitle}`} value={editDescription} maxLength={MAX_DESCRIPTION_LENGTH} multiline disabled={busy} onChange={setEditDescription} /></View> : <><Text numberOfLines={4} style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text>{entry.description ? <Text numberOfLines={compact ? 4 : 3} style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 19, marginTop: 6 }}>{entry.description}</Text> : null}</>}<Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View></View>
-      <View style={{ ...row, justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>{editing === entry.id ? <><Button c={c} large={compact} small={!compact} primary icon="Check" disabled={busy || !editTitle.trim() || editTitle.trim().length > MAX_TITLE_LENGTH || editDescription.trim().length > MAX_DESCRIPTION_LENGTH} onPress={() => saveEdit(entry)}>保存</Button><Button c={c} large={compact} small={!compact} disabled={busy} onPress={cancelEdit}>取消</Button></> : <><Button c={c} small icon="Pencil" disabled={busy} label={`编辑 Inbox 条目 ${entry.title}`} onPress={() => beginEdit(entry)}>编辑</Button><Button c={c} large={compact} small={!compact} primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button><Button c={c} small icon="Trash2" disabled={busy} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
+      <View style={{ ...row, flex: 1, minWidth: 0, gap: 14 }}>{(!compact || (dialog || editing?.id !== entry.id)) && <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>}
+      <View style={{ flex: 1, minWidth: 0 }}>{!dialog && editing?.id === entry.id ? editorFields : <><Text numberOfLines={4} style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text>{entry.description ? <Text numberOfLines={compact ? 4 : 3} style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 19, marginTop: 6 }}>{entry.description}</Text> : null}</>}<Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View></View>
+      <View style={{ ...row, justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>{!dialog && editing?.id === entry.id ? editorActions : <><Button c={c} small icon="Pencil" disabled={busy} label={`编辑 Inbox 条目 ${entry.title}`} onPress={() => beginEdit(entry)}>编辑</Button><Button c={c} large={compact} small={!compact} primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button><Button c={c} small icon="Trash2" disabled={busy} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
         if (confirmDelete !== entry.id) { setConfirmDelete(entry.id); return; }
         void remove(entry.id).then(ok => { if (ok) setConfirmDelete(null); });
       }}>{confirmDelete === entry.id ? '确认删除' : undefined}</Button></>}</View>
     </View>)}
-  </ScrollView>;
+  </ScrollView>
+    {dialog && editing && <InboxDialog colors={c} title="编辑想法" close={requestClose}>
+      {editorFields}
+      <View style={{ ...row, justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+        {discarding ? <>
+          <Text accessibilityRole="alert" style={{ flex: 1, color: c.foreground }}>放弃未保存的修改？</Text>
+          <Button c={c} onPress={cancelEdit}>放弃编辑</Button>
+          <Button c={c} primary onPress={() => setDiscarding(false)}>继续编辑</Button>
+        </> : editorActions}
+      </View>
+    </InboxDialog>}
+  </>;
 }
 
-function InboxEntryEditor({ c, label, value, maxLength, multiline, disabled, onChange }: { c: Colors; label: string; value: string; maxLength: number; multiline?: boolean; disabled: boolean; onChange(value: string): void }) {
-  return <TextInput accessibilityLabel={label} autoFocus={!multiline} value={value} editable={!disabled} maxLength={maxLength} multiline={multiline} onChangeText={onChange} style={{ width: '100%', color: c.foreground, borderColor: c.accent, backgroundColor: c.surface0, borderWidth: 1, borderRadius: 7, fontSize: 12, lineHeight: 19, paddingHorizontal: 10, paddingVertical: 8, minHeight: multiline ? 88 : 40, textAlignVertical: multiline ? 'top' : 'center' }} />;
+function InboxEntryEditor({ c, label, value, maxLength, multiline, expand, disabled, onChange }: { c: Colors; label: string; value: string; maxLength: number; multiline?: boolean; expand?: boolean; disabled: boolean; onChange(value: string): void }) {
+  return <TextInput accessibilityLabel={label} autoFocus={!multiline} value={value} editable={!disabled} maxLength={maxLength} multiline={multiline} onChangeText={onChange} style={{ width: '100%', color: c.foreground, borderColor: c.accent, backgroundColor: c.surface0, borderWidth: 1, borderRadius: 7, fontSize: 12, lineHeight: 19, paddingHorizontal: 10, paddingVertical: 8, minHeight: multiline ? 88 : 40, flexGrow: expand ? 1 : 0, textAlignVertical: multiline ? 'top' : 'center' }} />;
 }
 
 function TaskCard({ card, c, selected, busy, onSelect, onFavorite }: { card: Card; c: Colors; selected: boolean; busy: boolean; onSelect(): void; onFavorite(): void }) {

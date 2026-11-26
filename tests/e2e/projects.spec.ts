@@ -1,4 +1,25 @@
 import { expect, test } from '@playwright/test';
+import { fixture } from '../../preview/fixture';
+
+test('long project names can be scrolled or revealed with the accessible sidebar resizer', async ({ page }) => {
+  const data = fixture();
+  const name = 'A long workspace project name for checking the complete label';
+  for (const workspace of data.workspaces.filter(item => item.projectId === 'project-kanban')) workspace.project = name;
+  await page.addInitScript(snapshot => localStorage.setItem('paseo-kanban-preview-v1', JSON.stringify(snapshot)), data);
+  await page.goto('/');
+  const region = page.getByRole('region', { name: '项目列表' });
+  const project = region.getByRole('button', { name: `筛选项目 ${name}` });
+  await expect(project.getByText(name, { exact: true })).toHaveCSS('white-space', 'nowrap');
+  expect(await region.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0);
+  const handle = page.getByRole('separator', { name: '调整左侧栏宽度' });
+  await handle.press('End');
+  await expect(handle).toHaveAttribute('aria-valuenow', '720');
+  expect(await region.evaluate(element => element.scrollWidth - element.clientWidth)).toBe(0);
+  const ungrouped = region.getByRole('button', { name: '未分组', exact: true });
+  await ungrouped.click();
+  await expect(ungrouped).toHaveAttribute('aria-expanded', 'false');
+  await expect(project).toHaveCount(0);
+});
 
 test('sidebar project drag sorting persists and selection still filters the board', async ({ page }) => {
   await page.goto('/');

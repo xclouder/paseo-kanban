@@ -162,6 +162,7 @@ export function installQuickInbox(
   };
   const close = () => { if (!saving && !readingAttachments) dismiss(); };
   const open = () => {
+    if (ownerDocument.querySelector('[data-kanban-inbox-editor][open]')) return;
     if (overlay) {
       overlay.querySelector<HTMLInputElement>('#paseo-kanban-quick-inbox-input')?.focus();
       return;
@@ -178,7 +179,7 @@ export function installQuickInbox(
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     dialog.setAttribute('aria-labelledby', 'paseo-kanban-quick-inbox-title');
-    dialog.style.cssText = `box-sizing:border-box;width:min(560px,100%);padding:20px;border:1px solid ${palette.border};border-radius:14px;background:${palette.surface1};color:${palette.foreground};box-shadow:0 22px 70px rgba(0,0,0,.42);`;
+    dialog.style.cssText = `box-sizing:border-box;width:min(560px,100%);max-width:100%;max-height:calc(82vh - 20px);overflow:auto;resize:both;padding:20px;border:1px solid ${palette.border};border-radius:14px;background:${palette.surface1};color:${palette.foreground};box-shadow:0 22px 70px rgba(0,0,0,.42);`;
     dialog.innerHTML = `
       <div data-role="header" style="display:flex;align-items:center;gap:12px">
         <div data-role="icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16l2 10v6H2v-6Z"/><path d="M2 14h6l2 3h4l2-3h6"/></svg></div>

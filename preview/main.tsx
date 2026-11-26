@@ -89,7 +89,20 @@ const api: BoardApi = {
     return entry;
   },
   create: async input => { const existing = Object.values(data.store.tasks).find(task => task.createRequestId === input.clientRequestId); if (existing) return existing; const inboxEntry = input.inboxId ? data.store.inbox[input.inboxId] : undefined; if (input.inboxId && !inboxEntry) throw new Error('Inbox 条目已不存在，请刷新后重试。'); const now = new Date().toISOString(); const attachments = [...(inboxEntry?.attachments ?? []), ...(input.attachments ?? []).map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` }))]; const task = taskSchema.parse({ ...input, createRequestId: input.clientRequestId, attachments, id: `task:${crypto.randomUUID()}`, createdAt: now, updatedAt: now, stage: 'todo' }); data.store.tasks[task.id] = task; if (input.inboxId) delete data.store.inbox[input.inboxId]; persist(); return task; },
-  patchInbox: async ({ id, expectedTitle, expectedDescription, title, description }) => { const entry = data.store.inbox[id]; if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。'); if (entry.title !== expectedTitle || (expectedDescription !== undefined && entry.description !== expectedDescription)) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。'); entry.title = title; if (description !== undefined) entry.description = description; persist(); return entry; },
+  patchInbox: async ({ id, expectedTitle, expectedDescription, expectedRevision, title, description, attachmentAdditions = [], attachmentRemovals = [] }) => {
+    const entry = data.store.inbox[id];
+    if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。');
+    const revision = entry.revision ?? 0;
+    if (entry.title !== expectedTitle || (expectedDescription !== undefined && entry.description !== expectedDescription)
+        || (expectedRevision !== undefined && revision !== expectedRevision)) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。');
+    entry.title = title;
+    if (description !== undefined) entry.description = description;
+    entry.revision = revision + 1;
+    entry.attachments = entry.attachments.filter(attachment => !attachmentRemovals.includes(attachment.id));
+    entry.attachments.push(...attachmentAdditions.map(({ dataBase64: _dataBase64, ...attachment }) => ({ ...attachment, type: 'uploaded_file' as const, path: `preview-attachment://${attachment.id}` })));
+    persist();
+    return entry;
+  },
   removeInbox: async ({ id }) => {
     if (location.search.includes('inbox-delete-delay')) {
       await new Promise<void>(resolve => window.addEventListener('paseo-kanban:test-release-inbox-delete', () => resolve(), { once: true }));

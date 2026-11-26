@@ -157,7 +157,8 @@ export class BoardService {
       }
       return stored;
     } catch (error) {
-      const cleanup = [...stored.map(attachment => attachment.path), ...(attemptedPath ? [attemptedPath] : [])];
+      const cleanup = stored.map(attachment => attachment.path);
+      if (attemptedPath && (error as NodeJS.ErrnoException).code !== 'EEXIST') cleanup.push(attemptedPath);
       await Promise.all(cleanup.map(path => rm(path, { force: true }).catch(() => undefined)));
       throw error;
     }
@@ -228,8 +229,9 @@ export class BoardService {
       return this.providerFallback(this.providerLastError);
     }
   }
-  private async agents(paseo: PaseoApi) {
-    const entries = await collectPages(cursor => paseo.agents.list({ filter: { includeArchived: false }, sort: [{ key: 'created_at', direction: 'asc' }], page: { limit: 100, cursor } }));
+  private async agents(paseo: PaseoApi, includeLinkedHistory = false) {
+    const filter = { includeArchived: includeLinkedHistory, ...(includeLinkedHistory && { includeBackground: true }) };
+    const entries = await collectPages(cursor => paseo.agents.list({ filter, sort: [{ key: 'created_at', direction: 'asc' }], page: { limit: 100, cursor } }));
     return [...new Map(entries.map(({ agent }) => [agent.id, summarizeAgent(agent)])).values()];
   }
   async readProviders(paseo: PaseoApi) {
@@ -256,6 +258,13 @@ export class BoardService {
       timed('read', 'agents', () => this.agents(paseo), requestId),
       timed('read', 'workspaces', () => collectPages(cursor => paseo.workspaces.list({ sort: [{ key: 'name', direction: 'asc' }], page: { limit: 100, cursor } })), requestId),
     ]);
+    // Linked tasks can point to sessions outside Paseo's foreground directory.
+    const present = new Set(agents.map(agent => agent.id));
+    const linked = new Set(Object.values(store.tasks).flatMap(task => task.agentId && !present.has(task.agentId) ? [task.agentId] : []));
+    if (linked.size) {
+      const history = await withTimeout(this.agents(paseo, true), 2500).catch(() => []);
+      agents.push(...history.filter(agent => linked.has(agent.id)));
+    }
     if (maintain) void this.maintainAttachments().catch(error => console.error(JSON.stringify({ plugin: 'paseo-kanban', operation: 'maintenance', error: String(error) })));
     return { store, agents, workspaces: workspaces.map(summarizeWorkspace),
       ...(this.providerLatest ?? { providers: [], models: [], modes: [] }), fetchedAt: new Date().toISOString() };
@@ -445,13 +454,31 @@ export class BoardService {
     });
   }
   async patchInbox(input: PatchInboxInput) {
-    return this.store.update(data => {
+    return this.store.exclusive(async () => {
+      const data = await this.store.read();
       const entry = data.inbox[input.id];
       if (!entry) throw new Error('Inbox 条目不存在，请刷新后重试。');
-      if (entry.title !== input.expectedTitle || (input.expectedDescription !== undefined && entry.description !== input.expectedDescription)) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。');
-      entry.title = input.title;
-      if (input.description !== undefined) entry.description = input.description;
-      return entry;
+      const revision = entry.revision ?? 0;
+      if (entry.title !== input.expectedTitle || (input.expectedDescription !== undefined && entry.description !== input.expectedDescription)
+          || (input.expectedRevision !== undefined && revision !== input.expectedRevision)) throw new Error('Inbox 条目已在其他位置修改，请刷新后再保存。');
+      const removals = new Set(input.attachmentRemovals);
+      const additions = input.attachmentAdditions ?? [];
+      if (additions.some(addition => entry.attachments.some(attachment => attachment.id === addition.id))) throw new Error('附件标识重复，请移除后重新添加。');
+      const retained = entry.attachments.filter(attachment => !removals.has(attachment.id));
+      const owner = `inbox:${entry.id}`;
+      const stored = await this.saveAttachments(owner, additions, retained);
+      const updated = { ...entry, title: input.title, description: input.description ?? entry.description, revision: revision + 1, attachments: [...retained, ...stored] };
+      data.inbox[entry.id] = updated;
+      try {
+        await this.store.write(data);
+      } catch (error) {
+        await Promise.all(stored.map(({ path }) => rm(path, { force: true }).catch(() => undefined)));
+        throw error;
+      }
+      const directory = resolve(this.attachmentDirectory(owner));
+      const removed = entry.attachments.filter(({ id, path }) => removals.has(id) && resolve(dirname(path)) === directory);
+      await Promise.all(removed.map(({ path }) => rm(path, { force: true }).catch(() => undefined)));
+      return updated;
     });
   }
   async create(input: CreateInput, paseo: PaseoApi) {

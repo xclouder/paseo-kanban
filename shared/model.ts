@@ -46,6 +46,7 @@ export const inboxEntrySchema = z.object({
   title: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
   description: z.string().max(MAX_DESCRIPTION_LENGTH).default(''),
   createdAt: z.string(),
+  revision: z.number().int().nonnegative().optional(),
   attachments: z.array(taskAttachmentSchema).default([]),
 });
 export type InboxEntry = z.infer<typeof inboxEntrySchema>;

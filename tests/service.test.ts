@@ -65,9 +65,10 @@ function mockApi() {
   const configs: { provider: string; modeId?: string; thinkingOptionId?: string }[] = [];
   const createOptions: Record<string, unknown>[] = [];
   const openedPaths: string[] = [];
+  const hiddenFromDirectory = new Set<string>();
   const api = {
     agents: {
-      list: async (opts?: { filter?: { labels?: Record<string, string> } }) => ({ entries: agents.filter(a => !opts?.filter?.labels || Object.entries(opts.filter.labels).every(([k,v]) => a.labels[k] === v)).map(agent => ({ agent })), pageInfo: { hasMore: false, nextCursor: null } }),
+      list: async (opts?: { filter?: { labels?: Record<string, string>; includeBackground?: boolean } }) => ({ entries: agents.filter(a => (opts?.filter?.includeBackground || !hiddenFromDirectory.has(a.id)) && (!opts?.filter?.labels || Object.entries(opts.filter.labels).every(([k,v]) => a.labels[k] === v))).map(agent => ({ agent })), pageInfo: { hasMore: false, nextCursor: null } }),
       ref: (id: string) => ({ refresh: async () => { const agent = agents.find(a => a.id === id); return agent ? { agent } : null; } }),
     },
     workspaces: {
@@ -89,7 +90,7 @@ function mockApi() {
     },
     providers: { snapshot: async () => ({ requestId: 'snapshot', snapshotHash: 'snapshot', fetchedAt: new Date().toISOString(), entries: [{ provider: 'codex', status: 'ready', enabled: true, models: [{ id: 'model', label: 'Model', thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }, { id: 'high', label: 'High' }], defaultThinkingOptionId: 'medium' }], modes: snapshot.modes.filter(mode => mode.provider === 'codex') }] }), listAvailable: async () => ({ providers: [{ provider: 'codex', available: true }] }), listModels: async () => ({ models: [{ id: 'model', label: 'Model', thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium', isDefault: true }, { id: 'high', label: 'High' }], defaultThinkingOptionId: 'medium' }] }), listModes: async () => ({ modes: snapshot.modes.filter(mode => mode.provider === 'codex') }) },
   } as unknown as PaseoApi;
-  return { api, agents, configs, createOptions, openedPaths, get creates() { return creates; }, fail: () => { failure = true; }, lose: () => { loseResponse = true; } };
+  return { api, agents, configs, createOptions, openedPaths, hiddenFromDirectory, get creates() { return creates; }, fail: () => { failure = true; }, lose: () => { loseResponse = true; } };
 }
 const input = { clientRequestId: '66666666-6666-4666-8666-666666666666', title: 'Ship feature', description: 'Acceptance criteria', workspaceId: 'workspace-web', provider: 'codex/model', priority: 'high' as const, tags: ['test'] };
 
@@ -100,6 +101,20 @@ test('an active turn stays running after the client reconnects with an idle stat
   const snapshot = await service.read(mock.api);
   assert.equal(snapshot.agents[0].activeTurn, true);
   assert.equal(buildCards(snapshot).find(card => card.agent?.id === mock.agents[0].id)?.stage, 'running');
+});
+
+test('the board resolves linked background sessions without showing unrelated background sessions', async t => {
+  const { service, store } = await setup(t);
+  const mock = mockApi();
+  const task = await service.create(input, mock.api);
+  const [linked, unrelated] = mock.agents.slice(-2);
+  await store.update(data => { data.tasks[task.id].agentId = linked.id; });
+  mock.hiddenFromDirectory.add(linked.id);
+  mock.hiddenFromDirectory.add(unrelated.id);
+  const snapshot = await service.read(mock.api);
+  const cards = buildCards(snapshot);
+  assert.equal(cards.find(card => card.id === task.id)?.agent?.id, linked.id);
+  assert(!cards.some(card => card.agent?.id === unrelated.id));
 });
 
 test('project organization merges concurrent edits and survives store reload without changing tasks', async t => {
@@ -347,6 +362,25 @@ test('editing an Inbox idea updates its title and optional description', async t
   await assert.rejects(() => service.patchInbox({ id: entry.id, expectedTitle: 'Original idea', expectedDescription: 'Original details', title: 'Stale overwrite', description: '' }), /其他位置修改/);
   assert.equal((await store.read()).inbox[entry.id].title, 'Legacy client title edit');
   await assert.rejects(() => service.patchInbox({ id: '60606060-6060-4060-8060-606060606060', expectedTitle: 'Missing', title: 'Missing', description: '' }), /Inbox 条目不存在/);
+});
+test('Inbox attachment replacement is atomic and rejects stale editors', async t => {
+  const { service, store } = await setup(t);
+  const attachment = (id: string, fileName: string, text: string) => ({
+    id, fileName, mimeType: 'text/plain', size: Buffer.byteLength(text), dataBase64: Buffer.from(text).toString('base64'),
+  });
+  const before = attachment('71717171-7171-4171-8171-717171717171', 'before.txt', 'before');
+  const after = attachment('72727272-7272-4272-8272-727272727272', 'after.txt', 'after');
+  const entry = await service.addInbox({ clientRequestId: '73737373-7373-4373-8373-737373737373', title: 'Idea', attachments: [before] });
+  const patch = { id: entry.id, expectedTitle: entry.title, expectedRevision: 0, title: entry.title, attachmentRemovals: [before.id] };
+  await assert.rejects(() => service.patchInbox({ ...patch, attachmentAdditions: [{ ...after, size: after.size + 1 }] }), /内容不完整/);
+  assert.deepEqual((await store.read()).inbox[entry.id], entry);
+  assert.equal(await readFile(entry.attachments[0].path, 'utf8'), 'before');
+  const updated = await service.patchInbox({ ...patch, attachmentAdditions: [after] });
+  assert.equal(updated.revision, 1);
+  assert.equal(updated.attachments.length, 1);
+  assert.equal(await readFile(updated.attachments[0].path, 'utf8'), 'after');
+  await waitForMissing(entry.attachments[0].path);
+  await assert.rejects(() => service.patchInbox(patch), /其他位置修改/);
 });
 test('launch keeps the title out of the prompt body', async t => {
   const { service } = await setup(t); const mock = mockApi();

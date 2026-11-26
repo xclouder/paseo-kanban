@@ -94,6 +94,36 @@ test('Inbox restores an optimistically removed entry when deletion fails', async
   await expect(page.getByRole('alert')).toContainText('模拟 Inbox 删除失败');
 });
 
+test('resize the desktop Inbox editor without losing the draft', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('board-sidebar').getByRole('button', { name: /^Inbox/ }).click();
+  const entry = page.getByTestId('inbox-entry-11111111-1111-4111-8111-111111111111');
+  await entry.getByRole('button', { name: /^编辑 Inbox 条目/ }).click();
+  const editor = page.getByRole('dialog', { name: '编辑想法' });
+  const grip = editor.getByRole('button', { name: '调整窗口大小' });
+  const title = editor.getByRole('textbox', { name: /^编辑 Inbox 条目/ });
+  const description = editor.getByRole('textbox', { name: /^编辑 Inbox 详细描述/ });
+  await title.fill('A draft title');
+  const before = (await editor.boundingBox())!;
+  const beforeDescription = (await description.boundingBox())!;
+  const { x, y, width, height } = (await grip.boundingBox())!;
+  await page.mouse.move(x + width / 2, y + height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x + width / 2 + 85, y + height / 2 + 65);
+  await page.mouse.up();
+  const enlarged = (await editor.boundingBox())!;
+  expect(enlarged.width).toBeGreaterThan(before.width + 150);
+  expect(enlarged.height).toBeGreaterThan(before.height + 100);
+  expect((await description.boundingBox())!.height).toBeGreaterThan(beforeDescription.height + 100);
+  await grip.press('ArrowLeft');
+  expect((await editor.boundingBox())!.width).toBe(enlarged.width - 24);
+  await expect(title).toHaveValue('A draft title');
+  await page.keyboard.press('Escape');
+  await editor.getByRole('button', { name: '放弃编辑' }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(entry).toContainText('整理下周迭代要处理的体验问题');
+});
+
 test('edit an Inbox entry before creating its task', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
