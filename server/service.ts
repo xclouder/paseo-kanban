@@ -229,8 +229,9 @@ export class BoardService {
       return this.providerFallback(this.providerLastError);
     }
   }
-  private async agents(paseo: PaseoApi) {
-    const entries = await collectPages(cursor => paseo.agents.list({ filter: { includeArchived: false }, sort: [{ key: 'created_at', direction: 'asc' }], page: { limit: 100, cursor } }));
+  private async agents(paseo: PaseoApi, includeLinkedHistory = false) {
+    const filter = { includeArchived: includeLinkedHistory, ...(includeLinkedHistory && { includeBackground: true }) };
+    const entries = await collectPages(cursor => paseo.agents.list({ filter, sort: [{ key: 'created_at', direction: 'asc' }], page: { limit: 100, cursor } }));
     return [...new Map(entries.map(({ agent }) => [agent.id, summarizeAgent(agent)])).values()];
   }
   async readProviders(paseo: PaseoApi) {
@@ -257,6 +258,13 @@ export class BoardService {
       timed('read', 'agents', () => this.agents(paseo), requestId),
       timed('read', 'workspaces', () => collectPages(cursor => paseo.workspaces.list({ sort: [{ key: 'name', direction: 'asc' }], page: { limit: 100, cursor } })), requestId),
     ]);
+    // Linked tasks can point to sessions outside Paseo's foreground directory.
+    const present = new Set(agents.map(agent => agent.id));
+    const linked = new Set(Object.values(store.tasks).flatMap(task => task.agentId && !present.has(task.agentId) ? [task.agentId] : []));
+    if (linked.size) {
+      const history = await withTimeout(this.agents(paseo, true), 2500).catch(() => []);
+      agents.push(...history.filter(agent => linked.has(agent.id)));
+    }
     if (maintain) void this.maintainAttachments().catch(error => console.error(JSON.stringify({ plugin: 'paseo-kanban', operation: 'maintenance', error: String(error) })));
     return { store, agents, workspaces: workspaces.map(summarizeWorkspace),
       ...(this.providerLatest ?? { providers: [], models: [], modes: [] }), fetchedAt: new Date().toISOString() };
