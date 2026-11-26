@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createElement, useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { Icon } from '@getpaseo/plugin/client/react-native';
 import type { PluginTheme } from '@getpaseo/plugin';
@@ -45,6 +45,7 @@ export function ProjectSidebar({ c, projects, layout, selected, busy, web, selec
   select(id: string): void; count(id: string): number; organize(action: ProjectAction): Promise<boolean>;
 }) {
   const [editing, setEditing] = useState(false);
+  const [ungroupedExpanded, setUngroupedExpanded] = useState(true);
   const [newName, setNewName] = useState('');
   const [rename, setRename] = useState<{ id: string; name: string } | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
@@ -77,11 +78,13 @@ export function ProjectSidebar({ c, projects, layout, selected, busy, web, selec
       </View>
     </>}
     {error ? <Text accessibilityRole="alert" style={{ color: c.statusDanger, fontSize: 11 }}>{error}</Text> : null}
-    {sections.map((section, index) => <View key={section.id ?? 'ungrouped'} testID={`project-section-${section.id ?? 'ungrouped'}`} style={{ marginBottom: 5 }}>
+    {sections.map((section, index) => {
+      const expanded = section.id ? !section.collapsed : editing || ungroupedExpanded;
+      return <View key={section.id ?? 'ungrouped'} testID={`project-section-${section.id ?? 'ungrouped'}`} style={{ marginBottom: 5 }}>
       <WebSortTarget c={c} enabled={web} disabled={busy} drag={section.id && editing ? { kind: 'group', id: section.id } : undefined}
         onProject={id => { void change({ type: 'moveProject', id, groupId: section.id }); }}
         onGroup={id => { void change({ type: 'moveGroup', id, beforeId: section.id ?? undefined }); }}>
-        {(layout.groups.length > 0 || editing) && <View style={{ paddingVertical: 5 }}>
+        {(layout.groups.length > 0 || editing || section.projects.length > 0) && <View style={{ paddingVertical: 5 }}>
           {rename?.id === section.id ? <View style={row}>
             <TextInput accessibilityLabel="修改分组名称" value={rename.name} onChangeText={name => setRename({ id: rename.id, name })} maxLength={60} editable={!busy} style={inputStyle} />
             <Control c={c} icon="Check" label="保存分组名称" disabled={busy} onPress={() => void saveName()} />
@@ -89,7 +92,10 @@ export function ProjectSidebar({ c, projects, layout, selected, busy, web, selec
           </View> : <View style={row}>
             {section.id ? <Pressable accessibilityRole="button" accessibilityLabel={`${section.collapsed ? '展开' : '折叠'}分组 ${section.name}`} accessibilityState={{ expanded: !section.collapsed }} disabled={busy} onPress={() => void change({ type: 'collapseGroup', id: section.id!, collapsed: !section.collapsed })} style={{ ...row, flex: 1, gap: 5, padding: 4 }}>
               <Icon name={section.collapsed ? 'ChevronRight' : 'ChevronDown'} size={12} color={c.foregroundMuted} /><Text numberOfLines={1} style={{ color: c.foregroundMuted, flex: 1, fontSize: 11, fontWeight: '600' }}>{section.name}</Text><Text style={{ color: c.foregroundMuted, fontSize: 10 }}>{section.projects.length}</Text>
-            </Pressable> : <Text style={{ color: c.foregroundMuted, fontSize: 11, padding: 4 }}>未分组</Text>}
+            </Pressable> : <Pressable accessibilityRole="button" accessibilityLabel="未分组" aria-expanded={expanded} accessibilityState={{ expanded, disabled: editing }} disabled={editing} onPress={() => setUngroupedExpanded(open => !open)} style={{ ...row, gap: 5, padding: 4 }}>
+              <Icon name={expanded ? 'ChevronDown' : 'ChevronRight'} size={12} color={c.foregroundMuted} />
+              <Text style={{ color: c.foregroundMuted, fontSize: 11 }}>未分组</Text>
+            </Pressable>}
             {editing && section.id && <Control c={c} icon="Pencil" label={`重命名分组 ${section.name}`} disabled={busy} onPress={() => setRename({ id: section.id!, name: section.name })} />}
           </View>}
           {editing && section.id && <View style={{ ...row, justifyContent: 'flex-end' }}>
@@ -99,12 +105,15 @@ export function ProjectSidebar({ c, projects, layout, selected, busy, web, selec
           </View>}
         </View>}
       </WebSortTarget>
-      {!section.collapsed && section.projects.map((project, position) => <WebSortTarget key={project.id} c={c} enabled={web} disabled={busy} drag={editing ? { kind: 'project', id: project.id } : undefined}
+      {expanded && section.projects.map((project, position) => <WebSortTarget key={project.id} c={c} enabled={web} disabled={busy} drag={editing ? { kind: 'project', id: project.id } : undefined}
         onContextMenu={anchor => setContextMenu({ project, groupId: section.id, anchor })}
         onProject={id => { if (id !== project.id) void change({ type: 'moveProject', id, groupId: section.id, beforeId: project.id }); }}>
         <View testID={`sidebar-project-${project.id}`} style={{ borderRadius: 7, backgroundColor: selected === project.id || contextMenu?.project.id === project.id ? c.surface2 : 'transparent' }}>
           <Pressable accessibilityRole="button" accessibilityLabel={`筛选项目 ${project.name}`} accessibilityState={{ selected: selected === project.id }} onPress={() => select(project.id)} style={{ ...row, gap: 8, padding: 11 }}>
-            <Icon name={editing ? 'GripVertical' : 'FolderGit2'} size={14} color={c.foregroundMuted} /><Text numberOfLines={1} style={{ color: c.foreground, flex: 1, fontSize: 12 }}>{project.name}</Text><Text style={{ color: c.foregroundMuted, fontSize: 11 }}>{count(project.id)}</Text>
+            <Icon name={editing ? 'GripVertical' : 'FolderGit2'} size={14} color={c.foregroundMuted} />
+            {web ? createElement('span', { style: { color: c.foreground, flexGrow: 1, fontSize: 12, whiteSpace: 'nowrap' } }, project.name)
+              : <Text numberOfLines={1} style={{ color: c.foreground, flex: 1, fontSize: 12 }}>{project.name}</Text>}
+            <Text style={{ color: c.foregroundMuted, fontSize: 11 }}>{count(project.id)}</Text>
           </Pressable>
           {editing && <View style={{ ...row, justifyContent: 'flex-end' }}>
             <Control c={c} icon="ArrowUp" label={`上移项目 ${project.name}`} disabled={busy || position === 0} onPress={() => void change({ type: 'moveProject', id: project.id, groupId: section.id, beforeId: section.projects[position - 1].id })} />
@@ -117,7 +126,8 @@ export function ProjectSidebar({ c, projects, layout, selected, busy, web, selec
         </View>
       </WebSortTarget>)}
       {!section.collapsed && !section.projects.length && section.id && <Text style={{ color: c.foregroundMuted, fontSize: 10, padding: 9 }}>空分组 · 将项目拖到分组标题</Text>}
-    </View>)}
+    </View>;
+    })}
     {!projects.length && <Text style={{ color: c.foregroundMuted, padding: 10, fontSize: 11 }}>尚无项目</Text>}
     {web && contextMenu ? <ProjectContextMenu c={c} {...contextMenu} groups={layout.groups} busy={busy} close={() => setContextMenu(null)} move={groupId => { void change({ type: 'moveProject', id: contextMenu.project.id, groupId }).then(ok => { if (ok) setContextMenu(null); }); }} /> : null}
   </View>;

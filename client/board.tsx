@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import type { PluginTheme } from '@getpaseo/plugin';
 import type { PluginSurfaceProps, PluginWorkspacePanelProps } from '@getpaseo/plugin/client';
 import { useRpc } from '@getpaseo/plugin/client';
@@ -50,7 +50,7 @@ function ConnectedBoard(props: PluginSurfaceProps & { workspaceId?: string }) {
 type Colors = PluginTheme['colors'];
 type Notice = { text: string; error: boolean; retry?: boolean };
 const SIDEBAR_MIN_WIDTH = 176;
-const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_MAX_WIDTH = 720;
 const SIDEBAR_DEFAULT_WIDTH = 210;
 const row = { flexDirection: 'row', alignItems: 'center' } as const;
 const wrap = { ...row, flexWrap: 'wrap', gap: 8 } as const;
@@ -266,6 +266,10 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   const createCloseBlockedRef = useRef(createCloseBlocked);
   createCloseBlockedRef.current = createCloseBlocked;
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const { width: windowWidth } = useWindowDimensions();
+  const sidebarMax = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.floor(windowWidth * 0.45)));
+  const visibleSidebarWidth = Math.min(sidebarWidth, sidebarMax);
+  const sidebarDrag = useRef<{ id: number; x: number; width: number } | null>(null);
   const [defaultModel, setDefaultModel] = useState('');
   const [dragging, setDragging] = useState<string | null>(null);
   const [message, setMessage] = useState<Notice | null>(null);
@@ -452,17 +456,10 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     setDefaultModel(model);
     if (layout.platform === 'web' && typeof window !== 'undefined') window.localStorage.setItem(`paseo-kanban:default-model:${host.id}`, model);
   };
-  const resizeSidebar = (event: React.PointerEvent) => {
-    if (layout.platform !== 'web' || typeof window === 'undefined') return;
-    event.preventDefault();
-    const startX = event.clientX, startWidth = sidebarWidth;
-    const move = (next: PointerEvent) => setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth + next.clientX - startX)));
-    const up = (next: PointerEvent) => {
-      const width = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth + next.clientX - startX));
-      setSidebarWidth(width); window.localStorage.setItem(`paseo-kanban:sidebar-width:${host.id}`, String(width));
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  const resizeSidebar = (nextWidth: number) => {
+    const width = Math.min(sidebarMax, Math.max(SIDEBAR_MIN_WIDTH, Math.round(nextWidth)));
+    setSidebarWidth(width);
+    boardStorage(true)?.setItem(`paseo-kanban:sidebar-width:${host.id}`, String(width));
   };
   const all = useMemo(() => board.data ? buildCards(board.data) : [], [board.data]);
   const scope = all.filter(card => !workspaceId || card.workspaceId === workspaceId);
@@ -475,6 +472,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.title.localeCompare(b.title));
   const active = all.find(card => card.id === selected);
   const projects = [...new Map((board.data?.workspaces ?? []).filter(w => !workspaceId || w.id === workspaceId).map(w => [w.projectId, { id: w.projectId, name: w.project }])).values()];
+  const projectSidebar = board.data && <ProjectSidebar c={c} projects={projects} layout={board.data.store.projectLayout} selected={project} busy={busy} web={layout.platform === 'web'} select={id => { reset(); setProject(id); }} count={id => count(id)} organize={action => run(() => api.organize(action))} />;
   const count = (id?: string) => scope.filter(card => !card.hidden && (!id || card.projectId === id)).length;
   const move = (id: string, stage: Stage, beforeId?: string) => { setDragging(null); return run(() => api.move({ id, stage, beforeId }), `已移至${stageNames[stage]}`); };
   const completeReview = (ids: string[]) => { void run(() => api.completeReview({ ids }), `已将 ${ids.length} 个待审核任务标记为完成`); };
@@ -516,7 +514,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
   return <View testID={keyboardScopeTestId} style={{ flex: 1, backgroundColor: c.surface0, minHeight: 0 }}>
     {preview && <View style={{ ...row, backgroundColor: c.surface2, justifyContent: 'center', padding: 8, gap: 8 }}><Icon name="FlaskConical" size={13} color={c.statusWarning} /><Text style={{ color: c.foregroundMuted, fontSize: 11 }}>交互预览 · 使用示例数据，不会操作真实 Paseo 会话</Text></View>}
     <View style={{ flex: 1, flexDirection: 'row', minHeight: 0 }}>
-      {!layout.compact && !workspaceId && <View testID="board-sidebar" style={{ width: sidebarWidth, position: 'relative', borderRightWidth: 1, borderRightColor: c.border, padding: 16, paddingTop: 24 }}>
+      {!layout.compact && !workspaceId && <View testID="board-sidebar" style={{ width: visibleSidebarWidth, flexShrink: 0, position: 'relative', borderRightWidth: 1, borderRightColor: c.border, padding: 16, paddingTop: 24 }}>
         <View style={{ ...row, gap: 10, paddingHorizontal: 8, marginBottom: 30 }}><Icon name="PanelsTopLeft" size={23} color={c.accent} /><Text style={{ color: c.foreground, fontSize: 18, fontWeight: '700', letterSpacing: -0.6 }}>paseo<Text style={{ color: c.foregroundMuted, fontWeight: '400' }}> / board</Text></Text></View>
         <Label c={c}>工作台</Label>
         {sidebarItem('稍后再看', 'Clock', laterView, () => { reset(); setLaterView(true); }, scope.filter(card => card.watchLater).length)}
@@ -525,16 +523,38 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
         {sidebarItem('需要我处理', 'Inbox', attention, () => { reset(); setAttention(true); }, scope.filter(x => !x.hidden && ['blocked', 'review'].includes(x.stage)).length)}
         {sidebarItem('常用会话', 'Star', pinned, () => { reset(); setPinned(true); }, scope.filter(x => x.pinned).length)}
         <View style={{ height: 28 }} />
-        <ScrollView style={{ flex: 1 }}>
-          {board.data && <ProjectSidebar c={c} projects={projects} layout={board.data.store.projectLayout} selected={project} busy={busy} web={layout.platform === 'web'} select={id => { reset(); setProject(id); }} count={id => count(id)} organize={action => run(() => api.organize(action))} />}
-        </ScrollView>
+        {layout.platform === 'web' ? createElement('div', {
+          role: 'region', 'aria-label': '项目列表', tabIndex: 0,
+          style: { flex: '1 1 auto', minHeight: 0, overflow: 'auto' },
+        }, createElement('div', { style: { width: 'max-content', minWidth: '100%' } }, projectSidebar)) : <ScrollView style={{ flex: 1 }}>{projectSidebar}</ScrollView>}
         {sidebarItem('已收起', 'Archive', hidden, () => { reset(); setHidden(true); }, scope.filter(x => x.hidden).length)}
         <View style={{ marginTop: 18, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 18, ...row, gap: 8 }}>
           <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: board.isError ? c.statusDanger : c.statusSuccess }} />
           <Text numberOfLines={1} style={{ flex: 1, color: c.foregroundMuted, fontSize: 11 }}>{host.label}</Text>
           <Text style={{ color: c.foregroundMuted, fontSize: 10 }}>本机存储</Text>
         </View>
-        {layout.platform === 'web' && createElement('div', { 'data-testid': 'sidebar-resizer', role: 'separator', 'aria-label': '调整左侧栏宽度', 'aria-orientation': 'vertical', onPointerDown: resizeSidebar, style: { position: 'absolute', top: 0, right: -4, bottom: 0, width: 8, cursor: 'col-resize', touchAction: 'none', zIndex: 2 } })}
+        {layout.platform === 'web' && createElement('div', {
+          'data-testid': 'sidebar-resizer', role: 'separator', 'aria-label': '调整左侧栏宽度', 'aria-orientation': 'vertical', tabIndex: 0,
+          'aria-valuemin': SIDEBAR_MIN_WIDTH, 'aria-valuemax': sidebarMax, 'aria-valuenow': visibleSidebarWidth,
+          style: { position: 'absolute', top: 0, right: -4, bottom: 0, width: 8, cursor: 'col-resize', touchAction: 'none', zIndex: 2 },
+          onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
+            if (event.button !== 0 || sidebarDrag.current) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            sidebarDrag.current = { id: event.pointerId, x: event.clientX, width: visibleSidebarWidth };
+          },
+          onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
+            const start = sidebarDrag.current;
+            if (start?.id === event.pointerId) resizeSidebar(start.width + event.clientX - start.x);
+          },
+          onLostPointerCapture: () => { sidebarDrag.current = null; },
+          onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+            const widths = { ArrowLeft: visibleSidebarWidth - 24, ArrowRight: visibleSidebarWidth + 24, Home: SIDEBAR_MIN_WIDTH, End: sidebarMax };
+            const next = widths[event.key as keyof typeof widths];
+            if (next === undefined) return;
+            event.preventDefault();
+            resizeSidebar(next);
+          },
+        })}
       </View>}
       <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
         <View style={{ paddingHorizontal: layout.compact ? 18 : 28, paddingTop: layout.compact ? 18 : 25, paddingBottom: layout.compact ? 14 : 19, borderBottomWidth: 1, borderBottomColor: c.border, gap: layout.compact ? 14 : 18 }}>
