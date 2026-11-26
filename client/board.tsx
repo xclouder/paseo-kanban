@@ -15,6 +15,7 @@ import { BOARD_KEYBOARD_SCOPE_TEST_ID_PREFIX, isActiveBoardKeyboardScope, isOpen
 import { WebDragItem, WebDropZone } from './web';
 import { readCachedBoard, saveCachedBoard, readWithTimeout } from './board-cache';
 import { openKanbanSettings } from './open-settings';
+import { InboxDialog } from './inbox-dialog';
 
 export interface BoardApi {
   organize(action: ProjectAction): Promise<unknown>;
@@ -337,7 +338,7 @@ export function BoardView({ theme, host, layout, navigation, workspaceId, api, p
     const onKey = (event: KeyboardEvent) => {
       if (!isActiveBoardKeyboardScope(keyboardScopeTestId)) return;
       if (taskMenu) return;
-      if (document.querySelector(`[data-testid="${QUICK_INBOX_MODAL_TEST_ID}"]`)) return;
+      if (document.querySelector(`[data-testid="${QUICK_INBOX_MODAL_TEST_ID}"], [data-kanban-inbox-editor][open]`)) return;
       if (event.type === 'keydown' && (laterView || inboxView || pinned) && isOpenBoardShortcut(event)) {
         event.preventDefault(); event.stopImmediatePropagation(); reset();
         return;
@@ -735,6 +736,8 @@ function InboxPanel({ c, entries, compact, web, busy, add, createTask, edit, rem
   const [attachmentRemovals, setAttachmentRemovals] = useState<string[]>([]);
   const [reading, setReading] = useState(false);
   const [editError, setEditError] = useState('');
+  const [discarding, setDiscarding] = useState(false);
+  const dialog = web && !compact;
   const [captureTitle, setCaptureTitle] = useState('');
   const [captureDescription, setCaptureDescription] = useState('');
   const [captureRequestId, setCaptureRequestId] = useState(clientUuid);
@@ -750,9 +753,15 @@ function InboxPanel({ c, entries, compact, web, busy, add, createTask, edit, rem
     setEditDescription(entry.description);
     setAttachmentAdditions([]);
     setAttachmentRemovals([]);
+    setDiscarding(false);
     setEditError('');
   };
   const cancelEdit = () => setEditing(null);
+  const requestClose = () => {
+    if (busy || reading) return;
+    if (dirty && dialog) setDiscarding(true);
+    else cancelEdit();
+  };
   const canSave = dirty && !busy && !reading && editTitle.trim() && editTitle.trim().length <= MAX_TITLE_LENGTH
     && editDescription.trim().length <= MAX_DESCRIPTION_LENGTH;
   const saveEdit = async () => {
@@ -766,9 +775,9 @@ function InboxPanel({ c, entries, compact, web, busy, add, createTask, edit, rem
     if (ok) cancelEdit();
     else setEditError('保存失败，请根据看板提示重试。');
   };
-  const editorFields = editing && <View style={{ gap: 8 }}>
+  const editorFields = editing && <View style={{ gap: 8, flexGrow: 1 }}>
     <InboxEntryEditor c={c} label={`编辑 Inbox 条目 ${editing.title}`} value={editTitle} maxLength={MAX_TITLE_LENGTH} disabled={busy} onChange={setEditTitle} />
-    <InboxEntryEditor c={c} label={`编辑 Inbox 详细描述 ${editing.title}`} value={editDescription} maxLength={MAX_DESCRIPTION_LENGTH} multiline disabled={busy} onChange={setEditDescription} />
+    <InboxEntryEditor c={c} label={`编辑 Inbox 详细描述 ${editing.title}`} value={editDescription} maxLength={MAX_DESCRIPTION_LENGTH} multiline expand={dialog} disabled={busy} onChange={setEditDescription} />
     {retained.map(attachment => <View key={attachment.id} style={{ ...row, gap: 8 }}>
       <Text style={{ flex: 1, color: c.foreground, fontSize: 12 }}>{attachment.fileName}</Text>
       <Button c={c} small icon="X" label={`移除附件 ${attachment.fileName}`} disabled={busy || reading} onPress={() => setAttachmentRemovals(ids => [...ids, attachment.id])} />
@@ -780,7 +789,7 @@ function InboxPanel({ c, entries, compact, web, busy, add, createTask, edit, rem
   </View>;
   const editorActions = <>
     <Button c={c} large={compact} small={!compact} primary icon="Check" disabled={!canSave} onPress={() => void saveEdit()}>保存</Button>
-    <Button c={c} large={compact} small={!compact} disabled={busy || reading} onPress={cancelEdit}>取消</Button>
+    <Button c={c} large={compact} small={!compact} disabled={busy || reading} onPress={requestClose}>取消</Button>
   </>;
   const capture = async () => {
     const title = captureTitle.trim();
@@ -791,7 +800,7 @@ function InboxPanel({ c, entries, compact, web, busy, add, createTask, edit, rem
     if (ok) { setCaptureTitle(''); setCaptureDescription(''); setCaptureRequestId(clientUuid()); }
     setCapturing(false);
   };
-  return <ScrollView testID="inbox-panel" style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: 820, alignSelf: 'center', padding: compact ? 16 : 24, paddingBottom: compact ? 28 : 24, gap: compact ? 12 : 10 }}>
+  return <><ScrollView testID="inbox-panel" style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: 820, alignSelf: 'center', padding: compact ? 16 : 24, paddingBottom: compact ? 28 : 24, gap: compact ? 12 : 10 }}>
     {compact && add && <View style={{ padding: 16, borderRadius: 14, backgroundColor: c.surface2 }}>
       <View style={{ ...row, gap: 9, marginBottom: 12 }}><Icon name="Sparkles" size={18} color={c.accent} /><Text style={{ color: c.foreground, fontSize: 16, fontWeight: '700' }}>快速记一笔</Text></View>
       <TextInput accessibilityLabel="Inbox 输入" autoFocus multiline maxLength={MAX_TITLE_LENGTH} editable={!busy && !capturing} value={captureTitle} onChangeText={setCaptureTitle} placeholder="想法标题" placeholderTextColor={c.foregroundMuted} style={{ minHeight: 72, color: c.foreground, backgroundColor: c.surface1, borderWidth: 1, borderColor: captureTitle ? c.accent : c.border, borderRadius: 11, padding: 13, fontSize: 16, lineHeight: 23, textAlignVertical: 'top' }} />
@@ -803,18 +812,29 @@ function InboxPanel({ c, entries, compact, web, busy, add, createTask, edit, rem
       <Text style={{ color: c.foreground, fontSize: 14, fontWeight: '600' }}>Inbox 还是空的</Text>
       <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{compact ? '想到事情时，直接在上方记下一项。' : '在 Paseo 任意位置按 Ctrl+Shift+I 快速记下一项。'}</Text>
     </View> : sorted.map(entry => <View key={entry.id} testID={`inbox-entry-${entry.id}`} style={{ flexDirection: compact ? 'column' : 'row', alignItems: compact ? 'stretch' : 'center', gap: compact ? 10 : 14, padding: 15, borderWidth: 1, borderColor: c.border, borderRadius: 10, backgroundColor: c.surface1 }}>
-      <View style={{ ...row, flex: 1, minWidth: 0, gap: 14 }}>{(!compact || editing?.id !== entry.id) && <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>}
-      <View style={{ flex: 1, minWidth: 0 }}>{editing?.id === entry.id ? editorFields : <><Text numberOfLines={4} style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text>{entry.description ? <Text numberOfLines={compact ? 4 : 3} style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 19, marginTop: 6 }}>{entry.description}</Text> : null}</>}<Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View></View>
-      <View style={{ ...row, justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>{editing?.id === entry.id ? editorActions : <><Button c={c} small icon="Pencil" disabled={busy} label={`编辑 Inbox 条目 ${entry.title}`} onPress={() => beginEdit(entry)}>编辑</Button><Button c={c} large={compact} small={!compact} primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button><Button c={c} small icon="Trash2" disabled={busy} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
+      <View style={{ ...row, flex: 1, minWidth: 0, gap: 14 }}>{(!compact || (dialog || editing?.id !== entry.id)) && <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface2 }}><Icon name="Inbox" size={16} color={c.accent} /></View>}
+      <View style={{ flex: 1, minWidth: 0 }}>{!dialog && editing?.id === entry.id ? editorFields : <><Text numberOfLines={4} style={{ color: c.foreground, fontSize: 13, fontWeight: '600', lineHeight: 20 }}>{entry.title}</Text>{entry.description ? <Text numberOfLines={compact ? 4 : 3} style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 19, marginTop: 6 }}>{entry.description}</Text> : null}</>}<Text style={{ color: c.foregroundMuted, fontSize: 10, marginTop: 4 }}>{relativeTime(entry.createdAt)}{entry.attachments.length ? ` · ${entry.attachments.length} 个附件` : ''}</Text></View></View>
+      <View style={{ ...row, justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>{!dialog && editing?.id === entry.id ? editorActions : <><Button c={c} small icon="Pencil" disabled={busy} label={`编辑 Inbox 条目 ${entry.title}`} onPress={() => beginEdit(entry)}>编辑</Button><Button c={c} large={compact} small={!compact} primary icon="Plus" disabled={busy} onPress={() => createTask(entry)}>创建任务</Button><Button c={c} small icon="Trash2" disabled={busy} label={confirmDelete === entry.id ? `确认删除 Inbox 条目 ${entry.title}` : `删除 Inbox 条目 ${entry.title}`} onPress={() => {
         if (confirmDelete !== entry.id) { setConfirmDelete(entry.id); return; }
         void remove(entry.id).then(ok => { if (ok) setConfirmDelete(null); });
       }}>{confirmDelete === entry.id ? '确认删除' : undefined}</Button></>}</View>
     </View>)}
-  </ScrollView>;
+  </ScrollView>
+    {dialog && editing && <InboxDialog colors={c} title="编辑想法" close={requestClose}>
+      {editorFields}
+      <View style={{ ...row, justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+        {discarding ? <>
+          <Text accessibilityRole="alert" style={{ flex: 1, color: c.foreground }}>放弃未保存的修改？</Text>
+          <Button c={c} onPress={cancelEdit}>放弃编辑</Button>
+          <Button c={c} primary onPress={() => setDiscarding(false)}>继续编辑</Button>
+        </> : editorActions}
+      </View>
+    </InboxDialog>}
+  </>;
 }
 
-function InboxEntryEditor({ c, label, value, maxLength, multiline, disabled, onChange }: { c: Colors; label: string; value: string; maxLength: number; multiline?: boolean; disabled: boolean; onChange(value: string): void }) {
-  return <TextInput accessibilityLabel={label} autoFocus={!multiline} value={value} editable={!disabled} maxLength={maxLength} multiline={multiline} onChangeText={onChange} style={{ width: '100%', color: c.foreground, borderColor: c.accent, backgroundColor: c.surface0, borderWidth: 1, borderRadius: 7, fontSize: 12, lineHeight: 19, paddingHorizontal: 10, paddingVertical: 8, minHeight: multiline ? 88 : 40, textAlignVertical: multiline ? 'top' : 'center' }} />;
+function InboxEntryEditor({ c, label, value, maxLength, multiline, expand, disabled, onChange }: { c: Colors; label: string; value: string; maxLength: number; multiline?: boolean; expand?: boolean; disabled: boolean; onChange(value: string): void }) {
+  return <TextInput accessibilityLabel={label} autoFocus={!multiline} value={value} editable={!disabled} maxLength={maxLength} multiline={multiline} onChangeText={onChange} style={{ width: '100%', color: c.foreground, borderColor: c.accent, backgroundColor: c.surface0, borderWidth: 1, borderRadius: 7, fontSize: 12, lineHeight: 19, paddingHorizontal: 10, paddingVertical: 8, minHeight: multiline ? 88 : 40, flexGrow: expand ? 1 : 0, textAlignVertical: multiline ? 'top' : 'center' }} />;
 }
 
 function TaskCard({ card, c, selected, busy, onSelect, onFavorite }: { card: Card; c: Colors; selected: boolean; busy: boolean; onSelect(): void; onFavorite(): void }) {
