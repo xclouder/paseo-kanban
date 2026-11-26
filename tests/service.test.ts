@@ -348,6 +348,25 @@ test('editing an Inbox idea updates its title and optional description', async t
   assert.equal((await store.read()).inbox[entry.id].title, 'Legacy client title edit');
   await assert.rejects(() => service.patchInbox({ id: '60606060-6060-4060-8060-606060606060', expectedTitle: 'Missing', title: 'Missing', description: '' }), /Inbox 条目不存在/);
 });
+test('Inbox attachment replacement is atomic and rejects stale editors', async t => {
+  const { service, store } = await setup(t);
+  const attachment = (id: string, fileName: string, text: string) => ({
+    id, fileName, mimeType: 'text/plain', size: Buffer.byteLength(text), dataBase64: Buffer.from(text).toString('base64'),
+  });
+  const before = attachment('71717171-7171-4171-8171-717171717171', 'before.txt', 'before');
+  const after = attachment('72727272-7272-4272-8272-727272727272', 'after.txt', 'after');
+  const entry = await service.addInbox({ clientRequestId: '73737373-7373-4373-8373-737373737373', title: 'Idea', attachments: [before] });
+  const patch = { id: entry.id, expectedTitle: entry.title, expectedRevision: 0, title: entry.title, attachmentRemovals: [before.id] };
+  await assert.rejects(() => service.patchInbox({ ...patch, attachmentAdditions: [{ ...after, size: after.size + 1 }] }), /内容不完整/);
+  assert.deepEqual((await store.read()).inbox[entry.id], entry);
+  assert.equal(await readFile(entry.attachments[0].path, 'utf8'), 'before');
+  const updated = await service.patchInbox({ ...patch, attachmentAdditions: [after] });
+  assert.equal(updated.revision, 1);
+  assert.equal(updated.attachments.length, 1);
+  assert.equal(await readFile(updated.attachments[0].path, 'utf8'), 'after');
+  await waitForMissing(entry.attachments[0].path);
+  await assert.rejects(() => service.patchInbox(patch), /其他位置修改/);
+});
 test('launch keeps the title out of the prompt body', async t => {
   const { service } = await setup(t); const mock = mockApi();
   const task = await service.create(input, mock.api);
